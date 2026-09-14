@@ -461,6 +461,49 @@ def _partial_agent_eval_result(
     return result
 
 
+def _evaluated_source_from_options(
+    repository: str | None,
+    revision: str | None,
+    container_revision: str | None,
+) -> dict[str, str] | None:
+    """Build the evaluated-source identity from the orchestration input.
+
+    The identity is supplied rather than inferred, because the tree running the
+    evaluator is not the tree being evaluated. A value that is not in its
+    canonical shape is rejected here rather than dropped, so a card never says
+    ``not recorded`` for a field the operator believed they had supplied.
+    """
+    from skillevaluator.source_identity import normalized_evaluated_source
+
+    supplied = {
+        "repository": repository,
+        # One option covers both immutable revision shapes the card accepts,
+        # matching its single "Evaluated source revision" line.
+        "commit": revision,
+        "content_digest": revision,
+        "evaluator_container_revision": container_revision,
+    }
+    identity = normalized_evaluated_source({key: value for key, value in supplied.items() if value}) or {}
+    for option, value, accepted, expected in (
+        ("--evaluated-source-repository", repository, ("repository",), "a forge name such as owner/repository"),
+        (
+            "--evaluated-source-revision",
+            revision,
+            ("commit", "content_digest"),
+            "a full Git object id (40 or 64 hex characters) or a digest such as sha256:<64 hex characters>",
+        ),
+        (
+            "--evaluator-container-revision",
+            container_revision,
+            ("evaluator_container_revision",),
+            "an image reference such as ghcr.io/org/image@sha256:<64 hex characters>",
+        ),
+    ):
+        if value and not any(field in identity for field in accepted):
+            raise click.BadParameter(f"expected {expected}.", param_hint=option)
+    return identity or None
+
+
 def _run_agent_eval_or_skip(
     target_path: Path,
     *,
@@ -482,6 +525,7 @@ def _run_agent_eval_or_skip(
     harbor_keep_jobs: bool = False,
     block_on_agent_eval: bool = False,
     validate_source: bool = True,
+    evaluated_source: dict[str, str] | None = None,
     progress_reporter=None,
 ) -> ValidationResult:
     """Run Tier 3 live agent evaluation and fold the result into the combined report.
@@ -530,6 +574,7 @@ def _run_agent_eval_or_skip(
         copy_repo=copy_repo,
         timeout_multiplier=timeout_multiplier,
         harbor_keep_jobs=harbor_keep_jobs,
+        evaluated_source=evaluated_source,
     )
     try:
         service = EvaluationService()
@@ -1473,6 +1518,27 @@ def _print_run_banner(target_path: Path, content_type: str, profile: str | None)
     help_group=_TIER3_GROUP,
     help="Retain Harbor job dirs/artifacts after the run for inspection.",
 )
+@click.option(
+    "--evaluated-source-repository",
+    default=None,
+    cls=GroupedOption,
+    help_group=_RUN_GROUP,
+    help="Repository (owner/name) of the source tree being evaluated, recorded on BENCHMARK.md.",
+)
+@click.option(
+    "--evaluated-source-revision",
+    default=None,
+    cls=GroupedOption,
+    help_group=_RUN_GROUP,
+    help="Immutable revision of the evaluated source: a full Git object id, or a sha256/sha384/sha512 digest.",
+)
+@click.option(
+    "--evaluator-container-revision",
+    default=None,
+    cls=GroupedOption,
+    help_group=_RUN_GROUP,
+    help="Digest-pinned evaluator image reference recorded beside the evaluated source.",
+)
 @_report_options
 def validate(
     target_path: Path,
@@ -1512,6 +1578,9 @@ def validate(
     timeout_multiplier: float | None,
     harbor_keep_jobs: bool,
     workers: int,
+    evaluated_source_repository: str | None,
+    evaluated_source_revision: str | None,
+    evaluator_container_revision: str | None,
     report_formats: tuple[str, ...],
     output_dir: Path,
 ) -> None:
@@ -1531,6 +1600,11 @@ def validate(
     if dedup:
         _reject_linked_tier2_root(target_path)
     target_path = target_path.resolve()
+    evaluated_source = _evaluated_source_from_options(
+        evaluated_source_repository,
+        evaluated_source_revision,
+        evaluator_container_revision,
+    )
 
     from skillevaluator.cli_core import detect_content_type
     from skillevaluator.constants import (
@@ -1756,6 +1830,7 @@ def validate(
             harbor_keep_jobs=harbor_keep_jobs,
             block_on_agent_eval=block_on_agent_eval_effective,
             validate_source=preflight_tier3_source,
+            evaluated_source=evaluated_source,
             progress_reporter=reporter,
         )
         results.append(tier3_result)
@@ -1843,6 +1918,15 @@ def validate(
         from skillevaluator.source_identity import EvaluatedSourceConflict
 
         output_dir.mkdir(parents=True, exist_ok=True)
+        if evaluated_source:
+            # A PASS can be published without a completed Tier 3 run, so the
+            # identity rides on the results themselves rather than only on the
+            # Tier 3 payload. ``setdefault`` leaves an identity a producer
+            # already recorded in place; if the two disagree the renderer says
+            # so rather than picking one.
+            for result in results:
+                if isinstance(result.metadata, dict):
+                    result.metadata.setdefault("evaluated_source", evaluated_source)
         try:
             BenchmarkReporter(skill_name=target_path.name).save(results, output_dir / BENCHMARK_FILENAME)
         except EvaluatedSourceConflict as exc:

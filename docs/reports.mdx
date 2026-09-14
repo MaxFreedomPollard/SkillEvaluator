@@ -110,6 +110,9 @@ evaluation-result contract unchanged. It is never inferred from repository state
 while rendering, because the tree that renders a card is the evaluator checkout
 rather than the evaluated skill's source. The supported seams are:
 
+- `validate --evaluated-source-repository`, `--evaluated-source-revision` and
+  `--evaluator-container-revision`, which record the identity on the card and,
+  for a Tier 3 run, persist it into that run's `run_config.json`;
 - the `evaluated_source` argument to `build_agent_eval_payload` or
   `agent_eval_result_from_directory`;
 - an `evaluated_source` object in the run's `run_config.json`. Note that
@@ -119,10 +122,13 @@ rather than the evaluated skill's source. The supported seams are:
 - `metadata["evaluated_source"]` on any validation result, which is how a card
   that publishes without a completed Tier 3 run records its identity.
 
-Where two channels both supply a field and disagree, rendering fails rather than
-silently choosing one. `Evaluated source revision` records a commit SHA, or a
-canonical `sha256`/`sha384`/`sha512` digest of the evaluated skill content when a
-run has no upstream commit. Fields the orchestration did not supply render as
+Where any two carriers supply a field and disagree, rendering fails rather than
+silently choosing one, so the order results happen to arrive in can never decide
+which source tree a card names. `Evaluated source revision` records a full Git
+object id of 40 or 64 hex characters, or a canonical `sha256`/`sha384`/`sha512`
+digest of the evaluated skill content at that algorithm's own width when a run
+has no upstream commit. A short revision prefix is refused, because it can grow
+a second match as a tree grows. Fields the orchestration did not supply render as
 `not recorded (not supplied by the orchestration input)`.
 
 Keep the file with the skill and refresh it whenever the skill, eval dataset,

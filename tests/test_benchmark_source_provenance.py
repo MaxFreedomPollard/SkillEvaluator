@@ -638,3 +638,115 @@ class TestCliSurfacesTheConflict:
         assert result.exit_code != 0
         assert "evaluated source" in result.output
         assert "Traceback" not in result.output
+
+
+class TestCliSuppliesTheIdentity:
+    """A normal validate run records the identity, which is what #72 asked for."""
+
+    def _skill(self, tmp_path: Path) -> Path:
+        skill = tmp_path / "demo-skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text(
+            "---\n"
+            "name: demo-skill\n"
+            "description: A minimal skill used to check the recorded source identity.\n"
+            "---\n"
+            "\n"
+            "# Demo skill\n",
+            encoding="utf-8",
+        )
+        return skill
+
+    def _run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str):
+        from click.testing import CliRunner
+
+        from skillevaluator.cli import cli
+        from skillevaluator.validators.code_risk import CodeRiskValidator
+        from skillevaluator.validators.secrets import SecretsValidator
+
+        # Exercise the public CLI without the independent scanner integrations.
+        monkeypatch.setattr(CodeRiskValidator, "validate", lambda _self, _path: ValidationResult())
+        monkeypatch.setattr(SecretsValidator, "validate", lambda _self, _path: ValidationResult())
+        output_dir = tmp_path / "out"
+        invocation = CliRunner().invoke(
+            cli,
+            ["validate", str(self._skill(tmp_path)), "--no-dedup", "-r", "cli", "-o", str(output_dir), *args],
+        )
+        return invocation, output_dir / "BENCHMARK.md"
+
+    def test_supplied_identity_reaches_the_card(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _invocation, card_path = self._run(
+            tmp_path,
+            monkeypatch,
+            "--evaluated-source-repository",
+            "NVIDIA/NVFlare",
+            "--evaluated-source-revision",
+            _COMMIT_A,
+            "--evaluator-container-revision",
+            _CONTAINER,
+        )
+        card = card_path.read_text(encoding="utf-8")
+        assert _value(card, "Evaluated source") == "`NVIDIA/NVFlare`"
+        assert _value(card, "Evaluated source revision") == f"`{_COMMIT_A}`"
+        assert _value(card, "Evaluator container revision") == f"`{_CONTAINER}`"
+
+    def test_a_content_digest_is_accepted_as_the_revision(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run with no upstream commit still records an immutable revision."""
+        _invocation, card_path = self._run(tmp_path, monkeypatch, "--evaluated-source-revision", _DIGEST)
+        assert _value(card_path.read_text(encoding="utf-8"), "Evaluated source revision") == f"`{_DIGEST}`"
+
+    def test_without_the_options_the_card_says_not_recorded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default behaviour is unchanged for a run with no orchestration input."""
+        _invocation, card_path = self._run(tmp_path, monkeypatch)
+        card = card_path.read_text(encoding="utf-8")
+        assert _value(card, "Evaluated source") == _UNRECORDED
+        assert _value(card, "Evaluated source revision") == _UNRECORDED
+
+    @pytest.mark.parametrize(
+        ("option", "value"),
+        [
+            ("--evaluated-source-revision", _COMMIT_A[:7]),
+            ("--evaluated-source-revision", "sha512:" + "ab" * 16),
+            ("--evaluated-source-repository", "not a repository"),
+            ("--evaluator-container-revision", "has space"),
+        ],
+    )
+    def test_non_canonical_values_are_refused_at_the_boundary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, option: str, value: str
+    ) -> None:
+        """Rejecting here beats rendering `not recorded` for a field the operator supplied."""
+        invocation, card_path = self._run(tmp_path, monkeypatch, option, value)
+        assert invocation.exit_code != 0
+        assert "expected" in invocation.output
+        assert not card_path.exists()
+
+
+class TestIdentityReachesTheRunArtifact:
+    """The CLI identity has to survive every hop down to `run_config.json`."""
+
+    def test_evaluation_options_forward_the_identity(self) -> None:
+        from skillevaluator.evaluation import EvaluationOptions
+
+        identity = {"repository": "NVIDIA/NVFlare", "commit": _COMMIT_A}
+        options = EvaluationOptions(skill_path=Path(), evaluated_source=identity)
+        assert options.engine_kwargs()["evaluated_source"] == identity
+
+    @pytest.mark.parametrize(
+        ("module_path", "function_name"),
+        [
+            ("skillevaluator.cli", "_run_agent_eval_or_skip"),
+            ("skillevaluator.tier3.commands", "evaluate"),
+            ("skillevaluator.tier3.harbor.runner", "_run_harbor_eval_impl"),
+        ],
+    )
+    def test_each_hop_accepts_the_identity(self, module_path: str, function_name: str) -> None:
+        import importlib
+        import inspect
+
+        module = importlib.import_module(module_path)
+        signature = inspect.signature(getattr(module, function_name))
+        assert "evaluated_source" in signature.parameters
