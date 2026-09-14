@@ -1840,9 +1840,17 @@ def validate(
     if resolved_type == CONTENT_TYPE_SKILL:
         from skillevaluator.reporting import BenchmarkReporter
         from skillevaluator.reporting.naming import BENCHMARK_FILENAME
+        from skillevaluator.source_identity import EvaluatedSourceConflict
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        BenchmarkReporter(skill_name=target_path.name).save(results, output_dir / BENCHMARK_FILENAME)
+        try:
+            BenchmarkReporter(skill_name=target_path.name).save(results, output_dir / BENCHMARK_FILENAME)
+        except EvaluatedSourceConflict as exc:
+            # Publication fails closed on a contradictory identity, so report which
+            # values disagreed rather than letting the card write a guess.
+            raise click.ClickException(
+                f"{BENCHMARK_FILENAME} was not written because the run records more than one evaluated source ({exc})."
+            ) from exc
 
     effective_gate_results = list(tier1_gate_results)
     if block_on_dedup_effective:

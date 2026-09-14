@@ -28,11 +28,16 @@ All notable changes to SkillEvaluator are documented in this file.
   `evaluated_source` argument to `build_agent_eval_payload`, an
   `evaluated_source` object in the run's `run_config.json`, or
   `metadata["evaluated_source"]` on any validation result. It is never
-  inferred from repository state while rendering. Conflicting inputs fail
-  rather than being resolved by silent precedence.
-  `check_public_benchmarks.py --require-source-provenance` requires the fields
-  and fails any card publishing a `PASS` without them; it is opt-in, so the
-  default scan is unchanged for cards generated before the contract existed
+  inferred from repository state while rendering. Every populated carrier is
+  folded into one identity, so carriers that disagree fail closed instead of
+  letting result ordering decide which source tree a card claims to describe.
+  A revision is accepted only in an unambiguous shape: a full Git object id
+  (40 or 64 hex characters), or a digest whose width matches the algorithm it
+  names. `check_public_benchmarks.py --require-source-provenance` requires the
+  fields and fails any card publishing a `PASS` without them, including a
+  `PASS` whose evaluator container is named by a mutable tag rather than
+  pinned by digest; it is opt-in, so the default scan is unchanged for cards
+  generated before the contract existed
   ([#72](https://github.com/NVIDIA/SkillEvaluator/issues/72)).
 - SARIF 2.1.0 reporter (`-r sarif`) for GitHub Code Scanning and other SARIF
   consumers. Findings map to rule IDs, severity levels, and file locations from

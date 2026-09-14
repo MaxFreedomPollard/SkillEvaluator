@@ -117,6 +117,32 @@ class TestNormalization:
         }
 
     @pytest.mark.parametrize(
+        "value",
+        [
+            {"commit": _COMMIT_A[:7]},
+            {"commit": _COMMIT_A[:12]},
+            {"commit": "a" * 39},
+            {"commit": "a" * 41},
+            {"content_digest": "sha512:" + "ab" * 16},
+            {"content_digest": "sha256:" + "ab" * 48},
+            {"content_digest": "sha384:" + "ab" * 32},
+        ],
+    )
+    def test_ambiguous_or_mismatched_revisions_are_dropped(self, value: object) -> None:
+        """A short prefix can grow a second match, and a digest must match its own algorithm."""
+        assert normalized_evaluated_source(value) is None
+
+    @pytest.mark.parametrize("commit", ["a" * 40, "b" * 64])
+    def test_full_git_object_ids_are_accepted(self, commit: str) -> None:
+        """SHA-1 and SHA-256 object ids are both canonical Git revisions."""
+        assert normalized_evaluated_source({"commit": commit}) == {"commit": commit}
+
+    @pytest.mark.parametrize(("algorithm", "width"), [("sha256", 64), ("sha384", 96), ("sha512", 128)])
+    def test_each_digest_algorithm_requires_its_own_width(self, algorithm: str, width: int) -> None:
+        digest = f"{algorithm}:" + "a" * width
+        assert normalized_evaluated_source({"content_digest": digest}) == {"content_digest": digest}
+
+    @pytest.mark.parametrize(
         "repository",
         ["holgerroth/nvflare_examples", "NVIDIA/Megatron_LM", "some-org/repo.name"],
     )
@@ -390,10 +416,14 @@ class TestReporterGateRoundTrip:
     @pytest.mark.parametrize(
         "source",
         [
-            {"repository": "NVIDIA/NVFlare", "commit": _COMMIT_A},
-            {"repository": "holgerroth/nvflare_examples", "commit": _COMMIT_A},
+            {"repository": "NVIDIA/NVFlare", "commit": _COMMIT_A, "evaluator_container_revision": _CONTAINER},
+            {
+                "repository": "holgerroth/nvflare_examples",
+                "commit": _COMMIT_A,
+                "evaluator_container_revision": _CONTAINER,
+            },
             {"repository": "NVIDIA/Megatron_LM", "commit": _COMMIT_A, "evaluator_container_revision": _CONTAINER},
-            {"repository": "some-org/repo.name", "content_digest": _DIGEST},
+            {"repository": "some-org/repo.name", "content_digest": _DIGEST, "evaluator_container_revision": _CONTAINER},
         ],
     )
     def test_rendered_card_satisfies_the_strict_gate(self, tmp_path: Path, source: dict[str, str]) -> None:
@@ -455,9 +485,9 @@ class TestNonTier3CardsCanRecordTheIdentity:
         assert _value(card, "Evaluated source") == "`NVIDIA/NVFlare`"
         assert _value(card, "Evaluated source revision") == f"`{_COMMIT_A}`"
 
-    def test_tier3_payload_wins_over_result_metadata(self) -> None:
+    def test_carriers_that_agree_are_merged(self) -> None:
         tier1 = ValidationResult(validator_name="Schema", validator_description="d")
-        tier1.metadata["evaluated_source"] = {"repository": "NVIDIA/stale", "commit": _COMMIT_B}
+        tier1.metadata["evaluated_source"] = {"repository": "NVIDIA/NVFlare"}
         tier3 = ValidationResult(validator_name="AGENT_EVAL", validator_description="d")
         tier3.metadata["agent_eval"] = {
             "skill_name": "demo-skill",
@@ -467,6 +497,42 @@ class TestNonTier3CardsCanRecordTheIdentity:
         }
         card = self._card_from(tier3, tier1)
         assert _value(card, "Evaluated source") == "`NVIDIA/NVFlare`"
+        assert _value(card, "Evaluated source revision") == f"`{_COMMIT_A}`"
+
+    @pytest.mark.parametrize("reversed_order", [False, True])
+    def test_contradictory_carriers_fail_closed(self, reversed_order: bool) -> None:
+        """Result ordering must not decide which source tree a published card names."""
+        tier1 = ValidationResult(validator_name="Schema", validator_description="d")
+        tier1.metadata["evaluated_source"] = {"repository": "NVIDIA/stale", "commit": _COMMIT_B}
+        tier3 = ValidationResult(validator_name="AGENT_EVAL", validator_description="d")
+        tier3.metadata["agent_eval"] = {
+            "skill_name": "demo-skill",
+            "evaluated_source": {"repository": "NVIDIA/NVFlare", "commit": _COMMIT_A},
+            "summary": {"environment": "Isolated sandbox"},
+            "agents": {"codex": {"model": "gpt-codex"}},
+        }
+        results = [tier1, tier3] if reversed_order else [tier3, tier1]
+        with pytest.raises(EvaluatedSourceConflict):
+            self._card_from(*results)
+
+    def test_payload_conflicting_with_its_own_summary_fails_closed(self) -> None:
+        tier3 = ValidationResult(validator_name="AGENT_EVAL", validator_description="d")
+        tier3.metadata["agent_eval"] = {
+            "skill_name": "demo-skill",
+            "evaluated_source": {"repository": "NVIDIA/NVFlare"},
+            "summary": {"environment": "Isolated sandbox", "evaluated_source": {"repository": "NVIDIA/stale"}},
+            "agents": {"codex": {"model": "gpt-codex"}},
+        }
+        with pytest.raises(EvaluatedSourceConflict):
+            self._card_from(tier3)
+
+    def test_two_results_disagreeing_fail_closed(self) -> None:
+        first = ValidationResult(validator_name="Schema", validator_description="d")
+        first.metadata["evaluated_source"] = {"commit": _COMMIT_A}
+        second = ValidationResult(validator_name="Lint", validator_description="d")
+        second.metadata["evaluated_source"] = {"commit": _COMMIT_B}
+        with pytest.raises(EvaluatedSourceConflict):
+            self._card_from(first, second)
 
     def test_hostile_result_metadata_is_dropped(self) -> None:
         tier1 = ValidationResult(validator_name="Schema", validator_description="d")
@@ -484,3 +550,91 @@ class TestPassDetection:
         card = _pass_card(_NOT_RECORDED).replace("> **Overall verdict: PASS**", verdict_line, 1)
         reasons = _scan(tmp_path, card, require=True)
         assert "publication PASS without recorded evaluated source" in reasons
+
+
+class TestStrictGateRevisionSyntax:
+    """The stdlib-only gate mirrors the library rules, so neither side can drift."""
+
+    @pytest.mark.parametrize("revision", [_COMMIT_A[:7], "sha512:" + "ab" * 16])
+    def test_ambiguous_revision_does_not_satisfy_a_pass(self, tmp_path: Path, revision: str) -> None:
+        card = _pass_card(
+            f"- Evaluated source: `NVIDIA/NVFlare`\n"
+            f"- Evaluated source revision: `{revision}`\n"
+            f"- Evaluator container revision: `{_CONTAINER}`\n"
+        )
+        reasons = _scan(tmp_path, card, require=True)
+        assert "publication PASS without recorded evaluated source revision" in reasons
+
+    def test_pass_without_a_container_revision_is_flagged(self, tmp_path: Path) -> None:
+        """#72 was a card whose only revision was the evaluator image, so strict mode needs it too."""
+        card = _pass_card(
+            f"- Evaluated source: `NVIDIA/NVFlare`\n"
+            f"- Evaluated source revision: `{_COMMIT_A}`\n"
+            f"- Evaluator container revision: {_UNRECORDED}\n"
+        )
+        reasons = _scan(tmp_path, card, require=True)
+        assert "publication PASS without recorded evaluator container revision" in reasons
+
+    def test_mutable_container_tag_does_not_satisfy_a_pass(self, tmp_path: Path) -> None:
+        """A tag can be repointed after publication, so it cannot pin the build that ran."""
+        card = _pass_card(
+            f"- Evaluated source: `NVIDIA/NVFlare`\n"
+            f"- Evaluated source revision: `{_COMMIT_A}`\n"
+            f"- Evaluator container revision: `ghcr.io/nvidia/skillevaluator:latest`\n"
+        )
+        reasons = _scan(tmp_path, card, require=True)
+        assert "publication PASS without recorded evaluator container revision" in reasons
+
+    def test_digest_pinned_container_satisfies_a_pass(self, tmp_path: Path) -> None:
+        card = _pass_card(
+            f"- Evaluated source: `NVIDIA/NVFlare`\n"
+            f"- Evaluated source revision: `{_COMMIT_A}`\n"
+            f"- Evaluator container revision: `{_CONTAINER}`\n"
+        )
+        reasons = _scan(tmp_path, card, require=True)
+        assert "publication PASS without recorded evaluator container revision" not in reasons
+
+
+class TestCliSurfacesTheConflict:
+    """Failing closed must still read as a CLI error, not an unhandled traceback."""
+
+    def test_validate_reports_a_conflicting_identity_cleanly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from click.testing import CliRunner
+
+        from skillevaluator.cli import cli
+        from skillevaluator.reporting import BenchmarkReporter
+        from skillevaluator.validators.code_risk import CodeRiskValidator
+        from skillevaluator.validators.secrets import SecretsValidator
+
+        skill = tmp_path / "conflicting-source"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text(
+            "---\n"
+            "name: conflicting-source\n"
+            "description: A skill whose run records two different evaluated sources.\n"
+            "---\n"
+            "\n"
+            "# Conflicting source\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(CodeRiskValidator, "validate", lambda _self, _path: ValidationResult())
+        monkeypatch.setattr(SecretsValidator, "validate", lambda _self, _path: ValidationResult())
+
+        def _conflict(*_args: object, **_kwargs: object) -> None:
+            raise EvaluatedSourceConflict("conflicting evaluated source identity (repository: 'A/b' vs 'C/d')")
+
+        monkeypatch.setattr(BenchmarkReporter, "save", _conflict)
+
+        result = CliRunner().invoke(
+            cli,
+            ["validate", str(skill), "--no-dedup", "-r", "cli", "-o", str(tmp_path / "out")],
+        )
+
+        assert result.exit_code != 0
+        assert "evaluated source" in result.output
+        assert "Traceback" not in result.output

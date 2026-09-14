@@ -25,14 +25,20 @@ a validated value cannot break out of the span or inject markup.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Final
 
 # Forge limits: GitHub owners are <=39 characters and repository names <=100.
 _SOURCE_REPOSITORY: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
-_SOURCE_COMMIT: Final = re.compile(r"^[0-9a-f]{7,64}$")
+# A Git object id is a full SHA-1 (40 hex) or SHA-256 (64 hex) name. A short
+# prefix is ambiguous -- it can grow a second match as the tree grows -- so it
+# must not render as the immutable revision a reader is asked to trust.
+_SOURCE_COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 # A digest names its algorithm, so the algorithm half is an allowlist rather
-# than a charset: "totally-fake:0000..." must not read as a canonical digest.
-_SOURCE_CONTENT_DIGEST: Final = re.compile(r"^(?:sha256|sha384|sha512):[0-9a-f]{32,128}$")
+# than a charset ("totally-fake:0000..." must not read as a canonical digest),
+# and each algorithm admits only its own exact width, so "sha512:" followed by
+# 32 hex characters cannot pass as a canonical sha512 digest.
+_SOURCE_CONTENT_DIGEST: Final = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})$")
 # Admits a full OCI reference so a container revision can be pinned by digest.
 _EVALUATOR_CONTAINER_REVISION: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
 
@@ -90,6 +96,33 @@ class EvaluatedSourceConflict(ValueError):
     """Two orchestration inputs disagree about what was evaluated."""
 
 
+def merge_evaluated_sources(candidates: Iterable[object]) -> dict[str, str] | None:
+    """Merge every populated carrier of the identity into one, or raise.
+
+    A card can carry the identity in more than two places -- the Tier 3 payload,
+    that payload's summary, and the metadata of any validation result -- and the
+    order those are visited is incidental to how the run was scheduled. Reducing
+    them by "first valid wins" would therefore let result ordering decide which
+    source a published card claims to describe, which is precisely the
+    unverifiable provenance this contract exists to prevent.
+
+    Every carrier is normalized and folded together field by field instead, so a
+    disagreement anywhere among them fails closed rather than being silently
+    resolved by position.
+    """
+    merged: dict[str, str] = {}
+    for candidate in candidates:
+        normalized = normalized_evaluated_source(candidate)
+        if not normalized:
+            continue
+        conflicts = sorted(field for field in normalized.keys() & merged.keys() if normalized[field] != merged[field])
+        if conflicts:
+            detail = ", ".join(f"{field}: {merged[field]!r} vs {normalized[field]!r}" for field in conflicts)
+            raise EvaluatedSourceConflict(f"conflicting evaluated source identity ({detail})")
+        merged.update(normalized)
+    return merged or None
+
+
 def resolve_evaluated_source(
     explicit: object,
     fallback: object,
@@ -105,13 +138,4 @@ def resolve_evaluated_source(
     quietly picked one of two contradictory source revisions would be exactly
     the unverifiable provenance this contract exists to prevent.
     """
-    primary = normalized_evaluated_source(explicit) or {}
-    secondary = normalized_evaluated_source(fallback) or {}
-
-    conflicts = sorted(field for field in primary.keys() & secondary.keys() if primary[field] != secondary[field])
-    if conflicts:
-        detail = ", ".join(f"{field}: {secondary[field]!r} vs {primary[field]!r}" for field in conflicts)
-        raise EvaluatedSourceConflict(f"conflicting evaluated source identity ({detail})")
-
-    merged = {**secondary, **primary}
-    return merged or None
+    return merge_evaluated_sources((fallback, explicit))

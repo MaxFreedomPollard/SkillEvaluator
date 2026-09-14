@@ -140,7 +140,10 @@ _SOURCE_PROVENANCE_MARKERS = (
     "- Evaluator container revision:",
 )
 _SOURCE_REPOSITORY_VALUE = r"`[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}`"
-_SOURCE_REVISION_VALUE = r"`(?:[0-9a-f]{7,64}|(?:sha256|sha384|sha512):[0-9a-f]{32,128})`"
+# Mirrors ``skillevaluator.source_identity``: a full Git object id (SHA-1 or
+# SHA-256), or a digest whose width matches the algorithm it names. A short
+# prefix and an under-length digest are both rejected as ambiguous.
+_SOURCE_REVISION_VALUE = r"`(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})`"
 _CONTAINER_REVISION_VALUE = r"`[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}`"
 
 _SOURCE_METADATA_FIELD_RULES = (
@@ -156,9 +159,18 @@ _SOURCE_METADATA_FIELD_RULES = (
 # check matches the verdict line either way.
 _PUBLISHED_PASS = re.compile(r"^\s*>?\s*.*Overall verdict:\s*PASS\b", flags=re.IGNORECASE | re.MULTILINE)
 
+# A mutable tag can be repointed to a different build after the card is
+# published, which leaves the reader unable to recover what actually ran, so a
+# PASS has to pin the evaluator by digest or by a full implementation revision.
+_PASS_CONTAINER_REVISION_VALUE = (
+    r"`(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,127}@(?:sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})"
+    r"|[0-9a-f]{40}|[0-9a-f]{64})`"
+)
+
 _PASS_SOURCE_PROVENANCE_RULES = (
     ("Evaluated source", re.compile(_SOURCE_REPOSITORY_VALUE)),
     ("Evaluated source revision", re.compile(_SOURCE_REVISION_VALUE)),
+    ("Evaluator container revision", re.compile(_PASS_CONTAINER_REVISION_VALUE)),
 )
 
 

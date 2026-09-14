@@ -22,7 +22,7 @@ from skillevaluator.constants import (
     TIER3_LIFT_PASS_THRESHOLD,
 )
 from skillevaluator.reporting.base import ReporterBase, is_advisory_agent_eval_skip, passes_required_gate
-from skillevaluator.source_identity import evaluated_source_revision, normalized_evaluated_source
+from skillevaluator.source_identity import evaluated_source_revision, merge_evaluated_sources
 from skillevaluator.tier3_environments import HARBOR_ENV_MODES
 
 if TYPE_CHECKING:
@@ -839,14 +839,19 @@ def _evaluated_source(
 
     Every card shape needs a carrier for the identity, not just a completed
     Tier 3 run: a Tier 1-only card and an advisory Tier 3 skip can both publish
-    a PASS. The identity is therefore read from the Tier 3 payload when there is
-    one and from any result's metadata otherwise, mirroring how the persisted
-    publication policy is resolved.
+    a PASS. The identity is therefore read from the Tier 3 payload and from every
+    result's metadata alike, mirroring how the persisted publication policy is
+    resolved.
 
     The value is re-validated here rather than trusted, because a card can be
     rendered from a hand-built or legacy metadata dict that never passed the
     producer. Kept separate from the evaluator/container provenance so a reader
     can tell which source tree was evaluated from the build that evaluated it.
+
+    Every populated carrier is folded together rather than resolved by
+    precedence, so a card whose payload and whose result metadata name different
+    source trees raises ``EvaluatedSourceConflict`` instead of publishing
+    whichever the iteration order happened to reach first.
     """
     candidates: list[object] = [
         (ae or {}).get("evaluated_source"),
@@ -855,10 +860,7 @@ def _evaluated_source(
     candidates.extend(
         result.metadata.get("evaluated_source") for result in results if isinstance(result.metadata, dict)
     )
-    for candidate in candidates:
-        if source := normalized_evaluated_source(candidate):
-            return source
-    return {}
+    return merge_evaluated_sources(candidates) or {}
 
 
 def _environment(ae: dict[str, Any] | None) -> str | None:
