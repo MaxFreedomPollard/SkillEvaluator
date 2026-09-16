@@ -820,34 +820,6 @@ def _print_catalog_summary(total: int, failures: list[tuple[str, str]], reports_
 CATALOG_SUMMARY_FILENAME = "catalog-summary.json"
 
 
-def _catalog_child_argv_from_sys(skill_dir: Path, output_dir: Path, parent_argv: list[str]) -> list[str]:
-    """Rebuild ``validate`` argv for one catalog skill from ``sys.argv``."""
-    argv = list(parent_argv)
-    try:
-        validate_idx = next(i for i, arg in enumerate(argv) if arg == "validate")
-    except StopIteration:
-        return ["validate", str(skill_dir), "-o", str(output_dir)]
-
-    tail = argv[validate_idx + 1 :]
-
-    child_tail: list[str] = []
-    skip_next = False
-    for arg in tail:
-        if skip_next:
-            skip_next = False
-            continue
-        if arg in {"--workers", "-o", "--output-dir"}:
-            skip_next = True
-            continue
-        if arg.startswith("--workers=") or arg.startswith("--output-dir=") or arg.startswith("-o="):
-            continue
-        if not arg.startswith("-"):
-            continue
-        child_tail.append(arg)
-
-    return ["validate", str(skill_dir), *child_tail, "-o", str(output_dir)]
-
-
 def _catalog_child_argv_from_ctx(ctx: click.Context, skill_dir: Path, output_dir: Path) -> list[str]:
     """Rebuild ``validate`` argv from the active Click context (pytest-safe)."""
     params = ctx.params
@@ -949,17 +921,6 @@ def _catalog_child_argv_from_ctx(ctx: click.Context, skill_dir: Path, output_dir
             argv.extend(["-r", fmt])
     argv.extend(["-o", str(output_dir)])
     return argv
-
-
-def _catalog_child_argv(
-    ctx: click.Context,
-    skill_dir: Path,
-    output_dir: Path,
-    parent_argv: list[str],
-) -> list[str]:
-    if "validate" in parent_argv:
-        return _catalog_child_argv_from_sys(skill_dir, output_dir, parent_argv)
-    return _catalog_child_argv_from_ctx(ctx, skill_dir, output_dir)
 
 
 def _run_catalog_skill_worker(job: dict[str, Any]) -> tuple[str, bool, str, str | None]:
