@@ -167,6 +167,52 @@ def merge_evaluated_sources(candidates: Iterable[object]) -> dict[str, str] | No
     return merged or None
 
 
+def evaluated_source_carriers(metadata: object) -> tuple[object, ...]:
+    """Return every place one validation result can carry the identity.
+
+    A result records the identity in its own metadata, and a Tier 3 result also
+    carries the agent-eval payload, which the producer stamps at both its top
+    level and inside its summary. Listing the three places once, here, keeps the
+    card, the machine-readable report and the CLI reading the same set: a
+    carrier honoured by one report and ignored by another is how a run ends up
+    publishing two different answers about what it evaluated.
+
+    A level that is missing or is not a mapping yields a ``None`` entry rather
+    than being skipped, because ``merge_evaluated_sources`` already drops
+    whatever does not validate and a caller should not have to know the shape of
+    each nesting level. A metadata value that is not a mapping carries nothing,
+    so it yields no entries at all.
+    """
+    if not isinstance(metadata, dict):
+        return ()
+    payload = metadata.get("agent_eval")
+    payload = payload if isinstance(payload, dict) else {}
+    summary = payload.get("summary")
+    return (
+        metadata.get("evaluated_source"),
+        payload.get("evaluated_source"),
+        summary.get("evaluated_source") if isinstance(summary, dict) else None,
+    )
+
+
+def recorded_evaluated_source(metadatas: Iterable[object]) -> dict[str, str] | None:
+    """Return the single identity a run recorded, or raise if it recorded two.
+
+    Every carrier of every result is folded, rather than one nested agent-eval
+    payload being selected and the rest of them ignored. Selecting one would let
+    result ordering decide what a report claims to describe: a second agent-eval
+    result naming a different source tree would be shadowed by whichever result
+    the run happened to produce first, and reversing the list would publish the
+    other identity instead of failing closed.
+
+    Conflicts raise ``EvaluatedSourceConflict``, so a run that cannot say what it
+    evaluated publishes nothing rather than a guess.
+    """
+    return merge_evaluated_sources(
+        carrier for metadata in metadatas for carrier in evaluated_source_carriers(metadata)
+    )
+
+
 def resolve_evaluated_source(
     explicit: object,
     fallback: object,

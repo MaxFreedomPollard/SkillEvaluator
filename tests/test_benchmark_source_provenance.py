@@ -852,3 +852,57 @@ class TestIdentityReachesTheRunArtifact:
         module = importlib.import_module(module_path)
         signature = inspect.signature(getattr(module, function_name))
         assert "evaluated_source" in signature.parameters
+
+
+def _agent_eval_carrier(repository: str) -> dict[str, object]:
+    """A complete agent-eval payload naming one repository in both of its carriers."""
+    return {
+        "skill_name": "demo-skill",
+        "evaluated_source": {"repository": repository},
+        "summary": {"environment": "Isolated sandbox", "evaluated_source": {"repository": repository}},
+        "agents": {"codex": {"model": "gpt-codex"}},
+    }
+
+
+def _agent_eval_result(payload: dict[str, object]) -> ValidationResult:
+    result = ValidationResult(validator_name="AGENT_EVAL", validator_description="Run live agent evaluation")
+    result.metadata["agent_eval"] = payload
+    return result
+
+
+class TestEveryNestedAgentEvalCarrierIsFolded:
+    """Selecting one payload let result ordering decide which source tree a card named."""
+
+    @pytest.mark.parametrize("reversed_order", [False, True])
+    def test_two_payloads_naming_different_repositories_fail_closed(self, reversed_order: bool) -> None:
+        first = _agent_eval_result(_agent_eval_carrier("NVIDIA/NVFlare"))
+        second = _agent_eval_result(_agent_eval_carrier("NVIDIA/stale"))
+        results = [second, first] if reversed_order else [first, second]
+        with pytest.raises(EvaluatedSourceConflict, match="repository"):
+            BenchmarkReporter().render_all(results)
+
+    @pytest.mark.parametrize("reversed_order", [False, True])
+    def test_two_payloads_that_agree_still_render_the_identity(self, reversed_order: bool) -> None:
+        """Folding must not turn a repeated identity into a conflict."""
+        first = _agent_eval_result(_agent_eval_carrier("NVIDIA/NVFlare"))
+        second = _agent_eval_result(_agent_eval_carrier("NVIDIA/NVFlare"))
+        results = [second, first] if reversed_order else [first, second]
+        assert _value(BenchmarkReporter().render_all(results), "Evaluated source") == "`NVIDIA/NVFlare`"
+
+    @pytest.mark.parametrize("reversed_order", [False, True])
+    def test_a_summary_only_carrier_on_a_second_result_still_conflicts(self, reversed_order: bool) -> None:
+        """The deepest carrier of the second payload counts as much as the first payload's."""
+        payload = _agent_eval_result(_agent_eval_carrier("NVIDIA/NVFlare"))
+        summary_only = _agent_eval_result(
+            {
+                "skill_name": "demo-skill",
+                "summary": {
+                    "environment": "Isolated sandbox",
+                    "evaluated_source": {"repository": "NVIDIA/stale"},
+                },
+                "agents": {"codex": {"model": "gpt-codex"}},
+            }
+        )
+        results = [summary_only, payload] if reversed_order else [payload, summary_only]
+        with pytest.raises(EvaluatedSourceConflict, match="repository"):
+            BenchmarkReporter().render_all(results)

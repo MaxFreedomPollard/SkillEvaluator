@@ -22,7 +22,7 @@ from skillevaluator.constants import (
     TIER3_LIFT_PASS_THRESHOLD,
 )
 from skillevaluator.reporting.base import ReporterBase, is_advisory_agent_eval_skip, passes_required_gate
-from skillevaluator.source_identity import evaluated_source_revision, merge_evaluated_sources
+from skillevaluator.source_identity import evaluated_source_revision, recorded_evaluated_source
 from skillevaluator.tier3_environments import HARBOR_ENV_MODES
 
 if TYPE_CHECKING:
@@ -205,7 +205,7 @@ class BenchmarkReporter(ReporterBase):
         # Validated by ``normalized_evaluated_source``, so the identity is
         # published verbatim: escaping would rewrite `_` and `@` and corrupt the
         # very value the card exists to record.
-        source = _evaluated_source(results, ae)
+        source = _evaluated_source(results)
         repository = source.get("repository", "")
         lines.append(
             f"- Evaluated source: `{repository}`" if repository else "- Evaluated source: " + _SOURCE_UNRECORDED
@@ -583,6 +583,13 @@ class BenchmarkReporter(ReporterBase):
 
 
 def _agent_eval_payload(results: list[ValidationResult]) -> dict[str, Any] | None:
+    """Return the payload the score and run-detail lines describe.
+
+    A card reports one live evaluation, so the first payload found is the one
+    rendered. That choice is safe for scores, which belong to a single run, but
+    not for the evaluated-source identity: see ``_evaluated_source``, which folds
+    every carrier instead so a second payload cannot be silently dropped.
+    """
     for result in results:
         payload = result.metadata.get("agent_eval") if isinstance(result.metadata, dict) else None
         if isinstance(payload, dict):
@@ -831,36 +838,28 @@ def _evaluation_date(value: str) -> str:
         return value[:10] if re.fullmatch(r"\d{4}-\d{2}-\d{2}.*", value) else value
 
 
-def _evaluated_source(
-    results: list[ValidationResult],
-    ae: dict[str, Any] | None,
-) -> dict[str, str]:
+def _evaluated_source(results: list[ValidationResult]) -> dict[str, str]:
     """Return the validated evaluated-source identity recorded for this run.
 
     Every card shape needs a carrier for the identity, not just a completed
     Tier 3 run: a Tier 1-only card and an advisory Tier 3 skip can both publish
-    a PASS. The identity is therefore read from the Tier 3 payload and from every
-    result's metadata alike, mirroring how the persisted publication policy is
-    resolved.
+    a PASS. The identity is therefore read from every result's metadata and from
+    every nested agent-eval payload alike, mirroring how the persisted
+    publication policy is resolved.
 
-    The value is re-validated here rather than trusted, because a card can be
-    rendered from a hand-built or legacy metadata dict that never passed the
+    The results are handed to ``recorded_evaluated_source`` whole rather than
+    alongside the single payload the score lines use, because that payload is
+    the first one found: a run carrying two agent-eval results would otherwise
+    publish the identity of whichever came first and would name the other after
+    the list was reversed. Folding every carrier makes that disagreement raise
+    ``EvaluatedSourceConflict`` in either order.
+
+    The value is re-validated by the fold rather than trusted, because a card can
+    be rendered from a hand-built or legacy metadata dict that never passed the
     producer. Kept separate from the evaluator/container provenance so a reader
     can tell which source tree was evaluated from the build that evaluated it.
-
-    Every populated carrier is folded together rather than resolved by
-    precedence, so a card whose payload and whose result metadata name different
-    source trees raises ``EvaluatedSourceConflict`` instead of publishing
-    whichever the iteration order happened to reach first.
     """
-    candidates: list[object] = [
-        (ae or {}).get("evaluated_source"),
-        _mapping((ae or {}).get("summary")).get("evaluated_source"),
-    ]
-    candidates.extend(
-        result.metadata.get("evaluated_source") for result in results if isinstance(result.metadata, dict)
-    )
-    return merge_evaluated_sources(candidates) or {}
+    return recorded_evaluated_source(result.metadata for result in results) or {}
 
 
 def _environment(ae: dict[str, Any] | None) -> str | None:
