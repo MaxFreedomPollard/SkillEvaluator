@@ -24,20 +24,26 @@ All notable changes to SkillEvaluator are documented in this file.
   source tree was evaluated apart from the evaluator build that evaluated it.
   Previously two skills evaluated from different repositories by the same
   evaluator container produced cards whose only recorded revision was the shared
-  container tag. `validate` takes the identity as
+  container tag. `validate` and `tier3 evaluate` take the identity as
   `--evaluated-source-repository`, `--evaluated-source-revision` and
-  `--evaluator-container-revision`, records it on the card, and persists it into
-  a Tier 3 run's `run_config.json`. It can also arrive as the `evaluated_source`
+  `--evaluator-container-revision`. `validate` records it on the card and in
+  the top-level `evaluated_source` object of its JSON report and forwards it to
+  every child of a parallel catalog run; both commands persist it into a Tier 3
+  run's `run_config.json`. It can also arrive as the `evaluated_source`
   argument to `build_agent_eval_payload`, as an `evaluated_source` object in the
   run's `run_config.json`, or as `metadata["evaluated_source"]` on any
   validation result. It is never inferred from repository state while rendering,
   because the tree that renders a card is the evaluator checkout rather than the
-  evaluated skill's source. Every populated carrier is
-  folded into one identity, so carriers that disagree fail closed instead of
-  letting result ordering decide which source tree a card claims to describe.
+  evaluated skill's source. Every populated carrier, including the payload of
+  every Tier 3 result, is folded into one identity before any report is
+  written, so carriers that disagree fail closed with nothing published instead
+  of letting result ordering decide which source tree a card claims to describe.
   A revision is accepted only in an unambiguous shape: a full Git object id
   (40 or 64 hex characters), or a digest whose width matches the algorithm it
-  names. `check_public_benchmarks.py --require-source-provenance` requires the
+  names. A container revision is an image reference validated by component (a
+  name of up to 255 characters, an optional tag of up to 128, and a digest at
+  its algorithm's width), so a long repository name is no longer discarded.
+  `check_public_benchmarks.py --require-source-provenance` requires the
   fields and fails any card publishing a `PASS` without them, including a
   `PASS` whose evaluator container is named by a mutable tag rather than
   pinned by digest. SkillEvaluator's own CI now runs the scan with that flag;
