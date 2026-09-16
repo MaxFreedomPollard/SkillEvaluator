@@ -461,6 +461,51 @@ def _partial_agent_eval_result(
     return result
 
 
+def _finalize_evaluated_source(
+    results: list[ValidationResult],
+    evaluated_source: dict[str, str] | None,
+) -> None:
+    """Attach and resolve the source identity before any report is written.
+
+    Provenance is part of every report, not just the card, so it has to be
+    finalized ahead of ``emit_reports``. Resolving it afterwards published a JSON
+    report that recorded neither the source repository nor its revision while
+    BENCHMARK.md recorded both, and let a contradictory identity reach disk as
+    JSON and HTML before benchmark generation failed the run.
+
+    The identity rides on the results themselves, for every content type, because
+    a PASS can be published without a completed Tier 3 run and so cannot rely on
+    the Tier 3 payload as its carrier. ``setdefault`` leaves an identity a
+    producer already recorded in place, and the fold across every carrier raises
+    when the two disagree, so a run that cannot say what it evaluated writes
+    nothing at all.
+
+    The supplied identity is folded in as its own carrier rather than only being
+    attached, because ``setdefault`` is silent where it declines to overwrite: a
+    result that already recorded a different source tree would otherwise publish
+    that one while the operator's orchestration input was dropped unreported.
+    """
+    from skillevaluator.source_identity import (
+        EvaluatedSourceConflict,
+        merge_evaluated_sources,
+        recorded_evaluated_source,
+    )
+
+    if evaluated_source:
+        for result in results:
+            if isinstance(result.metadata, dict):
+                result.metadata.setdefault("evaluated_source", evaluated_source)
+    try:
+        merge_evaluated_sources(
+            (evaluated_source, recorded_evaluated_source(result.metadata for result in results))
+        )
+    except EvaluatedSourceConflict as exc:
+        # Name the values that disagreed rather than letting a report guess.
+        raise click.ClickException(
+            f"No report was written because the run records more than one evaluated source ({exc})."
+        ) from exc
+
+
 def _evaluated_source_from_options(
     repository: str | None,
     revision: str | None,
@@ -1875,6 +1920,7 @@ def validate(
 
     # Reporters and the exit gate consume the same finalized result objects.
     apply_policy(results, policy)
+    _finalize_evaluated_source(results, evaluated_source)
 
     content_label = {
         CONTENT_TYPE_SKILL: "Skill",
@@ -1918,15 +1964,10 @@ def validate(
         from skillevaluator.source_identity import EvaluatedSourceConflict
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        if evaluated_source:
-            # A PASS can be published without a completed Tier 3 run, so the
-            # identity rides on the results themselves rather than only on the
-            # Tier 3 payload. ``setdefault`` leaves an identity a producer
-            # already recorded in place; if the two disagree the renderer says
-            # so rather than picking one.
-            for result in results:
-                if isinstance(result.metadata, dict):
-                    result.metadata.setdefault("evaluated_source", evaluated_source)
+        # ``_finalize_evaluated_source`` already attached and resolved the
+        # identity, so a conflict aborts before any report file exists. This
+        # stays as the last line of defence: the renderer re-validates the
+        # carriers it is handed, and a producer can record one after the fact.
         try:
             BenchmarkReporter(skill_name=target_path.name).save(results, output_dir / BENCHMARK_FILENAME)
         except EvaluatedSourceConflict as exc:

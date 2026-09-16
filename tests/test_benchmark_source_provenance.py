@@ -906,3 +906,144 @@ class TestEveryNestedAgentEvalCarrierIsFolded:
         results = [summary_only, payload] if reversed_order else [payload, summary_only]
         with pytest.raises(EvaluatedSourceConflict, match="repository"):
             BenchmarkReporter().render_all(results)
+
+
+class TestJsonReportRecordsTheIdentity:
+    """CI parses the JSON report, so the provenance contract has to hold there too."""
+
+    def _report(self, *results: ValidationResult) -> dict[str, object]:
+        import json
+
+        from skillevaluator.reporting.json_reporter import JSONReporter
+
+        return json.loads(JSONReporter(include_timestamp=False).render_all(list(results)))
+
+    def test_result_metadata_reaches_the_top_level(self) -> None:
+        tier1 = ValidationResult(validator_name="Schema", validator_description="d")
+        tier1.metadata["evaluated_source"] = {"repository": "NVIDIA/NVFlare", "commit": _COMMIT_A}
+        assert self._report(tier1)["evaluated_source"] == {
+            "repository": "NVIDIA/NVFlare",
+            "commit": _COMMIT_A,
+        }
+
+    def test_a_nested_payload_carrier_reaches_the_top_level(self) -> None:
+        """A Tier 3 run records the identity on the payload, not on the result."""
+        report = self._report(_agent_eval_result(_agent_eval_carrier("NVIDIA/NVFlare")))
+        assert report["evaluated_source"] == {"repository": "NVIDIA/NVFlare"}
+
+    def test_a_run_with_no_identity_records_null(self) -> None:
+        """The key is always present, so null means none was supplied, not an older reporter."""
+        report = self._report(ValidationResult(validator_name="Schema", validator_description="d"))
+        assert "evaluated_source" in report
+        assert report["evaluated_source"] is None
+
+    def test_conflicting_carriers_fail_closed(self) -> None:
+        first = ValidationResult(validator_name="Schema", validator_description="d")
+        first.metadata["evaluated_source"] = {"commit": _COMMIT_A}
+        second = ValidationResult(validator_name="Lint", validator_description="d")
+        second.metadata["evaluated_source"] = {"commit": _COMMIT_B}
+        with pytest.raises(EvaluatedSourceConflict, match="commit"):
+            self._report(first, second)
+
+
+def _minimal_skill(tmp_path: Path, name: str, description: str) -> Path:
+    skill = tmp_path / name
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n",
+        encoding="utf-8",
+    )
+    return skill
+
+
+class TestTier1OnlyReportsCarryTheIdentity:
+    """A Tier 1-only run has no Tier 3 payload, and its JSON report still has to say what ran."""
+
+    def _run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> Path:
+        from click.testing import CliRunner
+
+        from skillevaluator.cli import cli
+        from skillevaluator.validators.code_risk import CodeRiskValidator
+        from skillevaluator.validators.secrets import SecretsValidator
+
+        # Exercise the public CLI without the independent scanner integrations.
+        monkeypatch.setattr(CodeRiskValidator, "validate", lambda _self, _path: ValidationResult())
+        monkeypatch.setattr(SecretsValidator, "validate", lambda _self, _path: ValidationResult())
+        skill = _minimal_skill(tmp_path, "demo-skill", "A minimal skill used to check the recorded identity.")
+        output_dir = tmp_path / "out"
+        invocation = CliRunner().invoke(
+            cli,
+            ["validate", str(skill), "--no-dedup", "-r", "json", "-o", str(output_dir), *args],
+        )
+        assert "evaluated source" not in invocation.output
+        return output_dir
+
+    def test_the_json_report_and_the_card_record_the_same_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        output_dir = self._run(
+            tmp_path,
+            monkeypatch,
+            "--evaluated-source-repository",
+            "NVIDIA/NVFlare",
+            "--evaluated-source-revision",
+            _COMMIT_A,
+            "--evaluator-container-revision",
+            _CONTAINER,
+        )
+
+        report = json.loads(next(output_dir.glob("*.json")).read_text(encoding="utf-8"))
+        assert report["evaluated_source"] == {
+            "repository": "NVIDIA/NVFlare",
+            "commit": _COMMIT_A,
+            "evaluator_container_revision": _CONTAINER,
+        }
+
+        card = (output_dir / "BENCHMARK.md").read_text(encoding="utf-8")
+        assert _value(card, "Evaluated source") == "`NVIDIA/NVFlare`"
+        assert _value(card, "Evaluated source revision") == f"`{_COMMIT_A}`"
+        assert _value(card, "Evaluator container revision") == f"`{_CONTAINER}`"
+
+
+class TestConflictAbortsBeforeAnyReportIsWritten:
+    """Failing closed after emit left JSON and HTML on disk carrying one of two identities."""
+
+    def test_no_report_file_survives_a_contradictory_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from click.testing import CliRunner
+
+        from skillevaluator import cli as cli_module
+        from skillevaluator.cli import cli
+
+        skill = _minimal_skill(tmp_path, "conflicting-source", "A skill whose run records two sources.")
+        tier1 = ValidationResult(validator_name="SCHEMA")
+        tier1.add_success("schema", "ok")
+        tier1.metadata["evaluated_source"] = {"repository": "C/d"}
+        monkeypatch.setattr(cli_module, "run_validation", lambda *_args, **_kwargs: [tier1])
+
+        output_dir = tmp_path / "out"
+        invocation = CliRunner().invoke(
+            cli,
+            [
+                "validate",
+                str(skill),
+                "--no-dedup",
+                "-r",
+                "json",
+                "-r",
+                "html",
+                "-o",
+                str(output_dir),
+                "--evaluated-source-repository",
+                "A/b",
+            ],
+        )
+
+        assert invocation.exit_code != 0
+        assert "evaluated source" in invocation.output
+        assert "Traceback" not in invocation.output
+        written = sorted(path.name for path in output_dir.rglob("*")) if output_dir.exists() else []
+        assert [name for name in written if name.endswith((".json", ".html")) or name == "BENCHMARK.md"] == []
