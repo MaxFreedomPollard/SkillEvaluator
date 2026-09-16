@@ -621,11 +621,54 @@ class TestNonTier3CardsCanRecordTheIdentity:
 class TestPassDetection:
     """The verdict line is honoured whether or not the card blockquotes it."""
 
-    @pytest.mark.parametrize("verdict_line", ["> **Overall verdict: PASS**", "**Overall verdict: PASS**"])
+    _POLICY_BULLET = (
+        "- Overall verdict: PASS only when every configured dimension passes for at least one supported agent."
+    )
+    _UNRECORDED_REASONS = (
+        "publication PASS without recorded evaluated source",
+        "publication PASS without recorded evaluated source revision",
+        "publication PASS without recorded evaluator container revision",
+    )
+
+    @staticmethod
+    def _unrecorded(reasons: list[str]) -> tuple[str, ...]:
+        return tuple(reason for reason in reasons if reason.startswith("publication PASS without recorded"))
+
+    @pytest.mark.parametrize(
+        "verdict_line",
+        [
+            "> **Overall verdict: PASS**",
+            "**Overall verdict: PASS**",
+            # The callout the reporter renders, written with the em dash escaped.
+            "> \u2705 **Overall verdict: PASS \u2014 Recommended for publication**",
+        ],
+    )
     def test_published_pass_needs_the_identity(self, tmp_path: Path, verdict_line: str) -> None:
         card = _pass_card(_NOT_RECORDED).replace("> **Overall verdict: PASS**", verdict_line, 1)
         reasons = _scan(tmp_path, card, require=True)
         assert "publication PASS without recorded evaluated source" in reasons
+
+    @pytest.mark.parametrize("verdict", ["INCOMPLETE", "FAIL"])
+    def test_the_policy_bullet_is_not_a_published_verdict(self, tmp_path: Path, verdict: str) -> None:
+        """The policy section restates the rule as a bullet under every verdict.
+
+        A card that publishes no PASS claims no source identity, so reading that
+        bullet as the verdict charges it with three offences it never committed.
+        """
+        card = _pass_card(_ABSENT).replace("> **Overall verdict: PASS**", f"> **Overall verdict: {verdict}**", 1)
+        card = f"{card}\n## Scoring Policy\n\n{self._POLICY_BULLET}\n"
+        assert self._unrecorded(_scan(tmp_path, card, require=True)) == ()
+
+    def test_the_published_card_carries_that_bullet_and_is_still_detected(self, tmp_path: Path) -> None:
+        """Excluding bullets must not blind the check on the card the reporter writes."""
+        card = (Path(__file__).parent / "golden" / "benchmark_pass" / "BENCHMARK.md").read_text(encoding="utf-8")
+        assert self._POLICY_BULLET in card
+        assert _scan(tmp_path, card, require=True) == []
+
+        stripped = "\n".join(
+            line for line in card.splitlines() if not line.startswith(benchmark_gate._SOURCE_PROVENANCE_MARKERS)
+        )
+        assert self._unrecorded(_scan(tmp_path, stripped, require=True)) == self._UNRECORDED_REASONS
 
 
 class TestStrictGateRevisionSyntax:

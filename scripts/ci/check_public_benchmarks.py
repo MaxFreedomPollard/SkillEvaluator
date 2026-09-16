@@ -80,8 +80,16 @@ _AGENT_MODEL_STATE = re.compile(
     flags=re.IGNORECASE,
 )
 _RECORDED_AGENT_MODEL_STATE = re.compile(r"^[^,]+ \(`[^`,]+`\)$")
+# A verdict line states a verdict and nothing else. Every card's policy section
+# restates the rule as a bullet ("- Overall verdict: PASS only when every
+# configured dimension passes ..."), so a list item is never a verdict, and a
+# stated verdict either ends its line or introduces the wording that explains
+# it. Both detectors below are built from this one tail, so they cannot
+# disagree about what a verdict line is; only the blockquote marker differs.
+_VERDICT_LINE_START = r"^(?!\s*(?:[-*+]|\d+[.)])\s)\s*"
+_VERDICT_PASS_TAIL = r"\s*.*Overall verdict:\s*PASS\b(?:\*\*)?\s*(?:$|[\u2014:\-(])"
 _OVERALL_PASS = re.compile(
-    r"^\s*>\s*.*Overall verdict:\s*PASS\b",
+    rf"{_VERDICT_LINE_START}>{_VERDICT_PASS_TAIL}",
     flags=re.IGNORECASE | re.MULTILINE,
 )
 # Each field carries the predicate that accepts its recorded value, because the
@@ -216,8 +224,14 @@ _SOURCE_METADATA_FIELD_RULES = (
 # says, so an "optional by policy" card cannot publish without the identity.
 # A hand-authored backfill card may state its verdict without a blockquote, and
 # the rollout runbook points this flag at exactly those trees, so the source
-# check matches the verdict line either way.
-_PUBLISHED_PASS = re.compile(r"^\s*>?\s*.*Overall verdict:\s*PASS\b", flags=re.IGNORECASE | re.MULTILINE)
+# check matches the verdict line either way. Making the marker optional is what
+# makes the list-item exclusion load-bearing here: the policy section restates
+# the rule as a bullet on every card, so without it an INCOMPLETE or FAIL card
+# reads as a published PASS and is charged for provenance it never claimed.
+_PUBLISHED_PASS = re.compile(
+    rf"{_VERDICT_LINE_START}>?{_VERDICT_PASS_TAIL}",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _valid_pass_container_revision(value: str) -> bool:
