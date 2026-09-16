@@ -928,6 +928,15 @@ def _catalog_child_argv_from_ctx(ctx: click.Context, skill_dir: Path, output_dir
         argv.extend(["--timeout-multiplier", str(params["timeout_multiplier"])])
     if params.get("harbor_keep_jobs"):
         argv.append("--harbor-keep-jobs")
+    # Every child renders its own BENCHMARK.md, so the identity has to reach
+    # each one: dropping it here would publish a catalog of cards that all say
+    # the evaluated source was never recorded.
+    if params.get("evaluated_source_repository"):
+        argv.extend(["--evaluated-source-repository", str(params["evaluated_source_repository"])])
+    if params.get("evaluated_source_revision"):
+        argv.extend(["--evaluated-source-revision", str(params["evaluated_source_revision"])])
+    if params.get("evaluator_container_revision"):
+        argv.extend(["--evaluator-container-revision", str(params["evaluator_container_revision"])])
     if _report_formats_explicit():
         for fmt in params.get("report_formats") or ():
             argv.extend(["-r", fmt])
@@ -2277,6 +2286,21 @@ def dedup_scan(
 @click.option("--override-memory-mb", type=int, default=None)
 @click.option("--override-storage-mb", type=int, default=None)
 @click.option(
+    "--evaluated-source-repository",
+    default=None,
+    help="Repository (owner/name) of the source tree being evaluated, recorded on BENCHMARK.md.",
+)
+@click.option(
+    "--evaluated-source-revision",
+    default=None,
+    help="Immutable revision of the evaluated source: a full Git object id, or a sha256/sha384/sha512 digest.",
+)
+@click.option(
+    "--evaluator-container-revision",
+    default=None,
+    help="Digest-pinned evaluator image reference recorded beside the evaluated source.",
+)
+@click.option(
     "--progress",
     type=click.Choice(["auto", "rich", "plain", "off"]),
     default="auto",
@@ -2308,6 +2332,9 @@ def evaluate(
     override_cpus: int | None,
     override_memory_mb: int | None,
     override_storage_mb: int | None,
+    evaluated_source_repository: str | None,
+    evaluated_source_revision: str | None,
+    evaluator_container_revision: str | None,
     progress: str,
 ) -> None:
     """Run Tier 3 live agent evaluation."""
@@ -2315,6 +2342,13 @@ def evaluate(
     from skillevaluator.tier3.harbor.progress import create_progress_reporter
 
     service = EvaluationService()
+    # Resolved before the service is built so a non-canonical value is refused
+    # at the boundary rather than after a long live run has already started.
+    evaluated_source = _evaluated_source_from_options(
+        evaluated_source_repository,
+        evaluated_source_revision,
+        evaluator_container_revision,
+    )
     if autopilot:
         _ensure_autopilot_dataset(skill_path)
 
@@ -2342,6 +2376,7 @@ def evaluate(
         override_cpus=override_cpus,
         override_memory_mb=override_memory_mb,
         override_storage_mb=override_storage_mb,
+        evaluated_source=evaluated_source,
     )
     try:
         if env_mode == "local":

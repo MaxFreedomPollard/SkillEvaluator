@@ -853,6 +853,103 @@ class TestIdentityReachesTheRunArtifact:
         signature = inspect.signature(getattr(module, function_name))
         assert "evaluated_source" in signature.parameters
 
+    def test_a_standalone_run_persists_the_identity_in_run_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A signature alone does not prove the value is written to disk.
+
+        The standalone ``tier3 evaluate`` producer owns its own run directory, so
+        the file a card is later rendered from has to carry the identity rather
+        than the ``null`` a dropped option leaves behind.
+        """
+        import json
+
+        from skillevaluator.provider_config import ProviderConfig
+        from skillevaluator.tier3 import commands as tier3_commands
+        from skillevaluator.tier3.harbor import runner, runtime_preflight
+
+        skill = tmp_path / "demo"
+        (skill / "evals").mkdir(parents=True)
+        (skill / "evals" / "evals.json").write_text("[]\n", encoding="utf-8")
+        provider = ProviderConfig(
+            provider="nv_build",
+            model="meta/llama-3.1-8b-instruct",
+            api_key="nvapi-test",
+            base_url="https://integrate.api.nvidia.com/v1",
+            litellm_model="openai/meta/llama-3.1-8b-instruct",
+        )
+
+        def emit(_skill, target, **_kwargs):
+            task = target / "case-001"
+            task.mkdir(parents=True)
+            return [task]
+
+        monkeypatch.setattr(tier3_commands, "resolve_llm_provider", lambda: provider)
+        monkeypatch.setattr(runner, "resolve_llm_provider", lambda: provider)
+        monkeypatch.setattr(
+            runner,
+            "load_evals_config",
+            lambda _path: ({"harbor": {"task_source": "evals_json"}}, None),
+        )
+        monkeypatch.setattr(runner, "find_evals_file", lambda _path: skill / "evals" / "evals.json")
+        monkeypatch.setattr(runner, "_check_prerequisites", lambda **_kwargs: [])
+        monkeypatch.setattr(runner, "generate_harbor_tasks", emit)
+        monkeypatch.setattr(
+            runtime_preflight,
+            "probe_model",
+            lambda selected_provider: runtime_preflight.ModelProbeResult(
+                True,
+                selected_provider.provider,
+                selected_provider.model,
+                f"model {selected_provider.model} is available",
+            ),
+        )
+        # The preflight is failed deliberately: the run stops before any agent
+        # work, and `run_config.json` is still written, which is the artifact
+        # under test.
+        monkeypatch.setattr(
+            runtime_preflight,
+            "run_agent_runtime_preflight",
+            lambda **_kwargs: runtime_preflight.PreflightResult(
+                False,
+                "opencode",
+                provider.model,
+                "401 Unauthorized",
+                "runtime-preflight-opencode",
+            ),
+        )
+
+        identity = {"repository": "NVIDIA/NVFlare", "commit": _COMMIT_A}
+        result = tier3_commands.evaluate(
+            skill,
+            agents="opencode",
+            env_mode="docker",
+            skip_baseline=True,
+            n_attempts=None,
+            pass_threshold=None,
+            n_concurrent=None,
+            max_agents=None,
+            model=None,
+            agent_model=(),
+            custom_dockerfile_mode=None,
+            skill_workspace_mode=None,
+            include_skills=(),
+            copy_repo=False,
+            grading_mode=None,
+            results_dir=tmp_path / "results",
+            harbor_keep_jobs=False,
+            agent_runtime_preflight=True,
+            timeout_multiplier=None,
+            override_cpus=None,
+            override_memory_mb=None,
+            override_storage_mb=None,
+            evaluated_source=identity,
+        )
+
+        run_config_path = Path(result["run_dir"]) / "run_config.json"
+        persisted = json.loads(run_config_path.read_text(encoding="utf-8"))
+        assert persisted["evaluated_source"] == identity
+
 
 def _agent_eval_carrier(repository: str) -> dict[str, object]:
     """A complete agent-eval payload naming one repository in both of its carriers."""

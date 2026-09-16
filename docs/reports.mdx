@@ -110,9 +110,10 @@ evaluation-result contract unchanged. It is never inferred from repository state
 while rendering, because the tree that renders a card is the evaluator checkout
 rather than the evaluated skill's source. The supported seams are:
 
-- `validate --evaluated-source-repository`, `--evaluated-source-revision` and
-  `--evaluator-container-revision`, which record the identity on the card and,
-  for a Tier 3 run, persist it into that run's `run_config.json`;
+- `--evaluated-source-repository`, `--evaluated-source-revision` and
+  `--evaluator-container-revision`, accepted by both `validate` and
+  `tier3 evaluate`, which record the identity on the card and, for a Tier 3 run,
+  persist it into that run's `run_config.json`;
 - the `evaluated_source` argument to `build_agent_eval_payload` or
   `agent_eval_result_from_directory`;
 - an `evaluated_source` object in the run's `run_config.json`. Note that
