@@ -39,14 +39,58 @@ _SOURCE_COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 # and each algorithm admits only its own exact width, so "sha512:" followed by
 # 32 hex characters cannot pass as a canonical sha512 digest.
 _SOURCE_CONTENT_DIGEST: Final = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})$")
-# Admits a full OCI reference so a container revision can be pinned by digest.
-_EVALUATOR_CONTAINER_REVISION: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
+# An OCI reference is bounded component by component rather than as a whole.
+# One cap over the whole string counts the ``@sha256:`` suffix against the
+# repository name, which silently discards an ordinary name pinned by digest,
+# and the OCI grammar already bounds each component on its own terms.
+_CONTAINER_NAME_MAX: Final = 255
+# name: an optional registry domain (with an optional port) followed by
+# slash-separated path components; tag: an optional mutable label of at most
+# 128 characters; digest: the allowlist and exact widths used for the content
+# digest above, so an under-length or invented algorithm cannot pass.
+_CONTAINER_REFERENCE_PATTERN: Final = (
+    r"(?P<name>"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
+    r"(?::[0-9]+)?/)?"
+    r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+    r"(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*"
+    r")"
+    r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?"
+    r"(?:@(?P<digest>sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128}))?"
+)
+_CONTAINER_REFERENCE: Final = re.compile(_CONTAINER_REFERENCE_PATTERN)
 
+
+def is_container_revision(value: str) -> bool:
+    """Return whether the value names the evaluator build that produced a card.
+
+    The name length is checked in Python rather than in the pattern because a
+    regex cannot bound one alternation-heavy group without either duplicating
+    the grammar or capping the reference as a whole, which is the bug this
+    replaces.
+    """
+    if _SOURCE_COMMIT.fullmatch(value):
+        # An evaluator run from a source checkout has no image to name, so its
+        # own implementation revision stands in, as the publication gate has
+        # always allowed for a published PASS.
+        return True
+    reference = _CONTAINER_REFERENCE.fullmatch(value)
+    if reference is None or len(reference["name"]) > _CONTAINER_NAME_MAX:
+        return False
+    # A bare name identifies a repository, not a revision: it cannot tell a
+    # reader which build ran, so it is refused here rather than published as an
+    # identity that does not identify anything.
+    return bool(reference["tag"] or reference["digest"])
+
+
+# Each field carries the predicate that accepts its canonical shape, because
+# the container reference needs a length rule the pattern cannot express.
 EVALUATED_SOURCE_FIELDS: Final = (
-    ("repository", _SOURCE_REPOSITORY),
-    ("commit", _SOURCE_COMMIT),
-    ("content_digest", _SOURCE_CONTENT_DIGEST),
-    ("evaluator_container_revision", _EVALUATOR_CONTAINER_REVISION),
+    ("repository", _SOURCE_REPOSITORY.fullmatch),
+    ("commit", _SOURCE_COMMIT.fullmatch),
+    ("content_digest", _SOURCE_CONTENT_DIGEST.fullmatch),
+    ("evaluator_container_revision", is_container_revision),
 )
 
 _CASE_FOLDED: Final = frozenset({"commit", "content_digest"})
@@ -64,7 +108,7 @@ def normalized_evaluated_source(value: object) -> dict[str, str] | None:
         return None
 
     normalized: dict[str, str] = {}
-    for field_name, pattern in EVALUATED_SOURCE_FIELDS:
+    for field_name, is_canonical in EVALUATED_SOURCE_FIELDS:
         raw = value.get(field_name)
         if not isinstance(raw, str):
             continue
@@ -73,7 +117,7 @@ def normalized_evaluated_source(value: object) -> dict[str, str] | None:
             # Hex revisions are case-insensitive, so fold them to one spelling
             # rather than dropping an otherwise valid uppercase digest.
             candidate = candidate.lower()
-        if candidate and pattern.fullmatch(candidate):
+        if candidate and is_canonical(candidate):
             normalized[field_name] = candidate
     return normalized or None
 

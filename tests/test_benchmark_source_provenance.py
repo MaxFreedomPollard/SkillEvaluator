@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from scripts.ci import check_public_benchmarks as benchmark_gate
 
+from skillevaluator import source_identity
 from skillevaluator.evaluation.tier3_report import build_agent_eval_payload
 from skillevaluator.models import ValidationResult
 from skillevaluator.reporting import BenchmarkReporter
@@ -155,6 +156,50 @@ class TestNormalization:
         assert normalized_evaluated_source({"evaluator_container_revision": _CONTAINER}) == {
             "evaluator_container_revision": _CONTAINER
         }
+
+    def test_a_long_repository_pinned_by_digest_is_accepted(self) -> None:
+        """A cap over the whole reference charged the digest to the name and dropped ordinary references."""
+        reference = "ghcr.io/nvidia/" + "e" * 53 + "@sha256:" + "0117bc2e" * 8
+        assert len(reference.partition("@")[0]) == 68
+        assert len(reference) == 140
+        assert normalized_evaluated_source({"evaluator_container_revision": reference}) == {
+            "evaluator_container_revision": reference
+        }
+
+    @pytest.mark.parametrize(("length", "accepted"), [(255, True), (256, False)])
+    def test_the_name_is_bounded_at_the_oci_maximum(self, length: int, accepted: bool) -> None:
+        """255 is the OCI NameTotalLengthMax, and it bounds the name rather than the whole reference."""
+        reference = "n" * length + "@sha256:" + "0117bc2e" * 8
+        assert bool(normalized_evaluated_source({"evaluator_container_revision": reference})) is accepted
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "localhost:5000/team/image:1.2.3@sha256:" + "0117bc2e" * 8,
+            "nvcr.io/nvidia/skillevaluator:1.3.2",
+            _COMMIT_A,
+        ],
+    )
+    def test_references_that_name_a_revision_are_accepted(self, revision: str) -> None:
+        """A registry port, a tag and an implementation revision all name the build that ran."""
+        assert normalized_evaluated_source({"evaluator_container_revision": revision}) == {
+            "evaluator_container_revision": revision
+        }
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "ghcr.io/nvidia/skillevaluator",
+            "ghcr.io/nvidia/skillevaluator@sha512:" + "ab" * 16,
+            "ghcr.io/nvidia/skillevaluator@md5:" + "ab" * 16,
+            "ghcr.io/nvidia/skillevaluator:" + "t" * 129,
+            "has space",
+            "ghcr.io/nvidia/skillevaluator`` injected",
+        ],
+    )
+    def test_references_that_name_no_build_are_dropped(self, revision: str) -> None:
+        """A bare name is a repository, not a revision, and the rest are unpinnable or not inert in a code span."""
+        assert normalized_evaluated_source({"evaluator_container_revision": revision}) is None
 
 
 class TestPayloadContract:
@@ -554,6 +599,63 @@ class TestPassDetection:
 
 class TestStrictGateRevisionSyntax:
     """The stdlib-only gate mirrors the library rules, so neither side can drift."""
+
+    _STRICT = "publication PASS without recorded evaluator container revision"
+    _ADVISORY = "invalid metadata field: - Evaluator container revision:"
+
+    @staticmethod
+    def _container_reasons(tmp_path: Path, revision: str) -> list[str]:
+        card = _pass_card(
+            f"- Evaluated source: `NVIDIA/NVFlare`\n"
+            f"- Evaluated source revision: `{_COMMIT_A}`\n"
+            f"- Evaluator container revision: `{revision}`\n"
+        )
+        return _scan(tmp_path, card, require=True)
+
+    def test_the_gate_mirrors_the_library_reference_grammar(self) -> None:
+        """Two copies of one rule stay one rule only while their source text is identical."""
+        assert benchmark_gate._CONTAINER_REFERENCE_PATTERN == source_identity._CONTAINER_REFERENCE_PATTERN
+        assert benchmark_gate._CONTAINER_NAME_MAX == source_identity._CONTAINER_NAME_MAX
+
+    def test_a_long_repository_pinned_by_digest_satisfies_a_pass(self, tmp_path: Path) -> None:
+        """The reference is 140 characters, which the old whole-reference cap discarded."""
+        reference = "ghcr.io/nvidia/" + "e" * 53 + "@sha256:" + "0117bc2e" * 8
+        assert len(reference) == 140
+        assert self._container_reasons(tmp_path, reference) == []
+
+    @pytest.mark.parametrize(("length", "accepted"), [(255, True), (256, False)])
+    def test_the_name_is_bounded_at_the_oci_maximum(self, tmp_path: Path, length: int, accepted: bool) -> None:
+        reference = "n" * length + "@sha256:" + "0117bc2e" * 8
+        reasons = self._container_reasons(tmp_path, reference)
+        assert (self._STRICT not in reasons) is accepted
+
+    def test_a_registry_port_and_tag_still_pin_by_digest(self, tmp_path: Path) -> None:
+        reference = "localhost:5000/team/image:1.2.3@sha256:" + "0117bc2e" * 8
+        assert self._container_reasons(tmp_path, reference) == []
+
+    def test_an_implementation_revision_satisfies_a_pass(self, tmp_path: Path) -> None:
+        """An evaluator built from a checkout has no image digest to record."""
+        assert self._container_reasons(tmp_path, _COMMIT_A) == []
+
+    def test_a_tagged_reference_is_recorded_but_not_publishable(self, tmp_path: Path) -> None:
+        """Normalization keeps the tag the operator supplied; only publication demands the digest."""
+        reasons = self._container_reasons(tmp_path, "nvcr.io/nvidia/skillevaluator:1.3.2")
+        assert self._ADVISORY not in reasons
+        assert self._STRICT in reasons
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "ghcr.io/nvidia/skillevaluator",
+            "ghcr.io/nvidia/skillevaluator@sha512:" + "ab" * 16,
+            "ghcr.io/nvidia/skillevaluator@md5:" + "ab" * 16,
+            "ghcr.io/nvidia/skillevaluator:" + "t" * 129,
+            "has space",
+            "ghcr.io/nvidia/skillevaluator`` injected",
+        ],
+    )
+    def test_references_that_name_no_build_do_not_satisfy_a_pass(self, tmp_path: Path, revision: str) -> None:
+        assert self._STRICT in self._container_reasons(tmp_path, revision)
 
     @pytest.mark.parametrize("revision", [_COMMIT_A[:7], "sha512:" + "ab" * 16])
     def test_ambiguous_revision_does_not_satisfy_a_pass(self, tmp_path: Path, revision: str) -> None:

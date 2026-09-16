@@ -84,49 +84,51 @@ _OVERALL_PASS = re.compile(
     r"^\s*>\s*.*Overall verdict:\s*PASS\b",
     flags=re.IGNORECASE | re.MULTILINE,
 )
+# Each field carries the predicate that accepts its recorded value, because the
+# container reference needs a length rule no single pattern can express.
 _METADATA_FIELD_RULES = (
     (
         "Evaluation date",
-        re.compile(r"(?:\d{4}-\d{2}-\d{2}|not recorded\b.*)", flags=re.IGNORECASE),
+        re.compile(r"(?:\d{4}-\d{2}-\d{2}|not recorded\b.*)", flags=re.IGNORECASE).fullmatch,
     ),
     (
         "Evaluator version",
-        re.compile(r"(?:`[^`\s][^`]*`|not recorded\b.*)", flags=re.IGNORECASE),
+        re.compile(r"(?:`[^`\s][^`]*`|not recorded\b.*)", flags=re.IGNORECASE).fullmatch,
     ),
     (
         "Tasks",
-        re.compile(r"(?:[1-9]\d*\s+evaluation tasks?(?:\s+\(.*\))?|not recorded\b.*)", flags=re.IGNORECASE),
+        re.compile(r"(?:[1-9]\d*\s+evaluation tasks?(?:\s+\(.*\))?|not recorded\b.*)", flags=re.IGNORECASE).fullmatch,
     ),
     (
         "Dataset digest",
-        re.compile(r"(?:`[^`\s][^`]*`(?:\s+\([^)]*\))?|not recorded\b.*)", flags=re.IGNORECASE),
+        re.compile(r"(?:`[^`\s][^`]*`(?:\s+\([^)]*\))?|not recorded\b.*)", flags=re.IGNORECASE).fullmatch,
     ),
     (
         "Attempts per task",
-        re.compile(r"(?:[1-9]\d*|not recorded\b.*)", flags=re.IGNORECASE),
+        re.compile(r"(?:[1-9]\d*|not recorded\b.*)", flags=re.IGNORECASE).fullmatch,
     ),
     (
         "Environment",
-        re.compile(r"(?:`[^`\s][^`]*`|not recorded\b.*)", flags=re.IGNORECASE),
+        re.compile(r"(?:`[^`\s][^`]*`|not recorded\b.*)", flags=re.IGNORECASE).fullmatch,
     ),
     (
         "Tier 3 evidence",
-        re.compile(r"(?:required for publication|optional by policy)", flags=re.IGNORECASE),
+        re.compile(r"(?:required for publication|optional by policy)", flags=re.IGNORECASE).fullmatch,
     ),
 )
 _PASS_METADATA_FIELD_RULES = (
-    ("Evaluation date", re.compile(r"\d{4}-\d{2}-\d{2}")),
-    ("Evaluator version", re.compile(r"`[^`\s][^`]*`")),
-    ("Tasks", re.compile(r"[1-9]\d*\s+evaluation tasks?(?:\s+\(.*\))?", flags=re.IGNORECASE)),
+    ("Evaluation date", re.compile(r"\d{4}-\d{2}-\d{2}").fullmatch),
+    ("Evaluator version", re.compile(r"`[^`\s][^`]*`").fullmatch),
+    ("Tasks", re.compile(r"[1-9]\d*\s+evaluation tasks?(?:\s+\(.*\))?", flags=re.IGNORECASE).fullmatch),
     (
         "Dataset digest",
         re.compile(
             r"`sha256:[0-9a-f]{64}`\s+\(skill-evaluator-dataset-snapshot/1\)",
             flags=re.IGNORECASE,
-        ),
+        ).fullmatch,
     ),
-    ("Attempts per task", re.compile(r"[1-9]\d*")),
-    ("Environment", re.compile(r"`[^`\s][^`]*`")),
+    ("Attempts per task", re.compile(r"[1-9]\d*").fullmatch),
+    ("Environment", re.compile(r"`[^`\s][^`]*`").fullmatch),
 )
 
 
@@ -144,12 +146,60 @@ _SOURCE_REPOSITORY_VALUE = r"`[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z
 # SHA-256), or a digest whose width matches the algorithm it names. A short
 # prefix and an under-length digest are both rejected as ambiguous.
 _SOURCE_REVISION_VALUE = r"`(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})`"
-_CONTAINER_REVISION_VALUE = r"`[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}`"
+_NOT_RECORDED_VALUE = re.compile(r"not recorded\b.*")
+# Mirrors ``skillevaluator.source_identity`` character for character, including
+# the name length, so the two sides cannot drift: an OCI reference is bounded
+# component by component rather than as a whole string, because one cap over the
+# whole reference counts the ``@sha256:`` suffix against the repository name and
+# silently discards an ordinary name pinned by digest.
+_CONTAINER_NAME_MAX = 255
+_CONTAINER_REFERENCE_PATTERN = (
+    r"(?P<name>"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
+    r"(?::[0-9]+)?/)?"
+    r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+    r"(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*"
+    r")"
+    r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?"
+    r"(?:@(?P<digest>sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128}))?"
+)
+_CONTAINER_REFERENCE = re.compile(_CONTAINER_REFERENCE_PATTERN)
+_GIT_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+
+
+def _code_span_value(value: str) -> str | None:
+    """Return what a metadata field renders inside its code span, or ``None``."""
+    if len(value) > 2 and value.startswith("`") and value.endswith("`"):
+        return value[1:-1]
+    return None
+
+
+def _valid_container_reference(reference: str, *, require_digest: bool) -> bool:
+    if _GIT_OBJECT_ID.fullmatch(reference):
+        # An evaluator run from a source checkout names its implementation
+        # revision instead of an image, and that revision is already immutable.
+        return True
+    match = _CONTAINER_REFERENCE.fullmatch(reference)
+    if match is None or len(match["name"]) > _CONTAINER_NAME_MAX:
+        return False
+    # A bare name identifies a repository rather than the build that ran, so it
+    # never records a revision on its own.
+    return bool(match["digest"]) if require_digest else bool(match["tag"] or match["digest"])
+
+
+def _valid_container_revision(value: str) -> bool:
+    """Accept a reference that names a revision, or the recorded absence."""
+    if _NOT_RECORDED_VALUE.fullmatch(value):
+        return True
+    reference = _code_span_value(value)
+    return reference is not None and _valid_container_reference(reference, require_digest=False)
+
 
 _SOURCE_METADATA_FIELD_RULES = (
-    ("Evaluated source", re.compile(rf"(?:{_SOURCE_REPOSITORY_VALUE}|not recorded\b.*)")),
-    ("Evaluated source revision", re.compile(rf"(?:{_SOURCE_REVISION_VALUE}|not recorded\b.*)")),
-    ("Evaluator container revision", re.compile(rf"(?:{_CONTAINER_REVISION_VALUE}|not recorded\b.*)")),
+    ("Evaluated source", re.compile(rf"(?:{_SOURCE_REPOSITORY_VALUE}|not recorded\b.*)").fullmatch),
+    ("Evaluated source revision", re.compile(rf"(?:{_SOURCE_REVISION_VALUE}|not recorded\b.*)").fullmatch),
+    ("Evaluator container revision", _valid_container_revision),
 )
 
 # A published PASS must name the source it evaluated, whatever the Tier 3 policy
@@ -159,18 +209,22 @@ _SOURCE_METADATA_FIELD_RULES = (
 # check matches the verdict line either way.
 _PUBLISHED_PASS = re.compile(r"^\s*>?\s*.*Overall verdict:\s*PASS\b", flags=re.IGNORECASE | re.MULTILINE)
 
-# A mutable tag can be repointed to a different build after the card is
-# published, which leaves the reader unable to recover what actually ran, so a
-# PASS has to pin the evaluator by digest or by a full implementation revision.
-_PASS_CONTAINER_REVISION_VALUE = (
-    r"`(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,127}@(?:sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})"
-    r"|[0-9a-f]{40}|[0-9a-f]{64})`"
-)
+
+def _valid_pass_container_revision(value: str) -> bool:
+    """Require the digest of the build that ran, on the same grammar as above.
+
+    A mutable tag can be repointed to a different build after the card is
+    published, which leaves the reader unable to recover what actually ran, so a
+    PASS has to pin the evaluator by digest or by a full implementation revision.
+    """
+    reference = _code_span_value(value)
+    return reference is not None and _valid_container_reference(reference, require_digest=True)
+
 
 _PASS_SOURCE_PROVENANCE_RULES = (
-    ("Evaluated source", re.compile(_SOURCE_REPOSITORY_VALUE)),
-    ("Evaluated source revision", re.compile(_SOURCE_REVISION_VALUE)),
-    ("Evaluator container revision", re.compile(_PASS_CONTAINER_REVISION_VALUE)),
+    ("Evaluated source", re.compile(_SOURCE_REPOSITORY_VALUE).fullmatch),
+    ("Evaluated source revision", re.compile(_SOURCE_REVISION_VALUE).fullmatch),
+    ("Evaluator container revision", _valid_pass_container_revision),
 )
 
 
@@ -239,14 +293,14 @@ def _check_metadata_semantics(
     rules = _METADATA_FIELD_RULES
     if require_source_provenance:
         rules += _SOURCE_METADATA_FIELD_RULES
-    for field, pattern in rules:
+    for field, is_valid in rules:
         matches = _metadata_field_matches(metadata_lines, field)
         marker = f"- {field}:"
         if not matches:
             offenders.append(Offender(path, metadata_lines[0][0], f"missing metadata field: {marker}"))
             continue
         line_number, value = matches[0]
-        if len(matches) > 1 or not pattern.fullmatch(value):
+        if len(matches) > 1 or not is_valid(value):
             offenders.append(Offender(path, line_number, f"invalid metadata field: {marker}"))
 
     agent_matches = _metadata_field_matches(metadata_lines, "Agents")
@@ -345,10 +399,10 @@ def _check_source_provenance(path: Path, text: str, offenders: list[Offender]) -
     """Reject a published PASS that does not record the source it evaluated."""
     metadata_lines = _metadata_section_lines(text)
     fallback_line = metadata_lines[0][0] if metadata_lines else 1
-    for field, pattern in _PASS_SOURCE_PROVENANCE_RULES:
+    for field, is_valid in _PASS_SOURCE_PROVENANCE_RULES:
         matches = _metadata_field_matches(metadata_lines, field)
         line_number = matches[0][0] if matches else fallback_line
-        if len(matches) != 1 or not pattern.fullmatch(matches[0][1]):
+        if len(matches) != 1 or not is_valid(matches[0][1]):
             offenders.append(Offender(path, line_number, f"publication PASS without recorded {field.lower()}"))
 
 
@@ -356,10 +410,10 @@ def _check_pass_provenance(path: Path, text: str, offenders: list[Offender]) -> 
     """Reject PASS cards that replace required provenance with legacy placeholders."""
     metadata_lines = _metadata_section_lines(text)
     fallback_line = metadata_lines[0][0] if metadata_lines else 1
-    for field, pattern in _PASS_METADATA_FIELD_RULES:
+    for field, is_valid in _PASS_METADATA_FIELD_RULES:
         matches = _metadata_field_matches(metadata_lines, field)
         line_number = matches[0][0] if matches else fallback_line
-        if len(matches) != 1 or not pattern.fullmatch(matches[0][1]):
+        if len(matches) != 1 or not is_valid(matches[0][1]):
             offenders.append(Offender(path, line_number, f"publication PASS without recorded {field.lower()}"))
 
     agent_matches = _metadata_field_matches(metadata_lines, "Agents")
