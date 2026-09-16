@@ -41,8 +41,12 @@ All notable changes to SkillEvaluator are documented in this file.
   A revision is accepted only in an unambiguous shape: a full Git object id
   (40 or 64 hex characters), or a digest whose width matches the algorithm it
   names. A container revision is an image reference validated by component (a
-  name of up to 255 characters, an optional tag of up to 128, and a digest at
-  its algorithm's width), so a long repository name is no longer discarded.
+  repository path of up to 255 characters, an optional tag of up to 128, and a
+  digest at its algorithm's width), so a long repository name is no longer
+  discarded. The 255 bound measures the path once the registry host is split
+  off it. Path components are lower case, as the OCI grammar requires, while a
+  registry host may use any case and is read as a host only when it is
+  `localhost`, carries a dot, or carries a port.
   `check_public_benchmarks.py --require-source-provenance` requires the
   fields and fails any card publishing a `PASS` without them, including a
   `PASS` whose evaluator container is named by a mutable tag rather than

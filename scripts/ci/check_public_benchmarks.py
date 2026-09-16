@@ -148,24 +148,34 @@ _SOURCE_REPOSITORY_VALUE = r"`[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z
 _SOURCE_REVISION_VALUE = r"`(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})`"
 _NOT_RECORDED_VALUE = re.compile(r"not recorded\b.*")
 # Mirrors ``skillevaluator.source_identity`` character for character, including
-# the name length, so the two sides cannot drift: an OCI reference is bounded
+# the path length, so the two sides cannot drift: an OCI reference is bounded
 # component by component rather than as a whole string, because one cap over the
-# whole reference counts the ``@sha256:`` suffix against the repository name and
-# silently discards an ordinary name pinned by digest.
-_CONTAINER_NAME_MAX = 255
+# whole reference counts the ``@sha256:`` suffix against the repository path and
+# silently discards an ordinary name pinned by digest. The bound measures the
+# path once the registry host has been split off it, which is where the
+# reference grammar's RepositoryNameTotalLengthMax applies.
+_CONTAINER_PATH_MAX = 255
+# A first component is a registry host only where the reference grammar says so:
+# it is ``localhost``, it carries a dot, or it carries a port. Anything else
+# begins the path, whose components are lower case, while a host label is
+# matched in either case because DNS is case-insensitive.
+_CONTAINER_HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 _CONTAINER_REFERENCE_PATTERN = (
     r"(?P<name>"
-    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
-    r"(?::[0-9]+)?/)?"
+    rf"(?:(?:localhost|{_CONTAINER_HOST_LABEL}(?:\.{_CONTAINER_HOST_LABEL})+)(?::[0-9]+)?/"
+    rf"|{_CONTAINER_HOST_LABEL}:[0-9]+/)?"
+    r"(?P<path>"
     r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
     r"(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*"
+    r")"
     r")"
     r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?"
     r"(?:@(?P<digest>sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128}))?"
 )
 _CONTAINER_REFERENCE = re.compile(_CONTAINER_REFERENCE_PATTERN)
-_GIT_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+# Anchors included, so this is the same pattern text as ``_SOURCE_COMMIT`` and
+# the drift test can compare the two strings rather than trusting the eye.
+_GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 def _code_span_value(value: str) -> str | None:
@@ -181,7 +191,7 @@ def _valid_container_reference(reference: str, *, require_digest: bool) -> bool:
         # revision instead of an image, and that revision is already immutable.
         return True
     match = _CONTAINER_REFERENCE.fullmatch(reference)
-    if match is None or len(match["name"]) > _CONTAINER_NAME_MAX:
+    if match is None or len(match["path"]) > _CONTAINER_PATH_MAX:
         return False
     # A bare name identifies a repository rather than the build that ran, so it
     # never records a revision on its own.

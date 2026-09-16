@@ -130,12 +130,16 @@ object id of 40 or 64 hex characters, or a canonical `sha256`/`sha384`/`sha512`
 digest of the evaluated skill content at that algorithm's own width when a run
 has no upstream commit. A short revision prefix is refused, because it can grow
 a second match as a tree grows. `Evaluator container revision` records an image
-reference validated component by component: a name of at most 255 characters, an
-optional tag of at most 128 characters, and an optional digest at its own
-algorithm's width. A bare name is refused because it identifies a repository
-rather than the build that ran, and a published PASS additionally requires the
-digest, or a full implementation revision, because a tag can be repointed after
-the card is published. Fields the orchestration did not supply render as
+reference validated component by component: a repository path of at most 255
+characters, an optional tag of at most 128 characters, and an optional digest at
+its own algorithm's width. The 255 bound measures the path once the registry
+host has been split off it. Path components are lower case, as the OCI grammar
+requires, while a registry host may use any case and is read as a host only when
+it is `localhost`, carries a dot, or carries a port. A bare name is refused
+because it identifies a repository rather than the build that ran, and a
+published PASS additionally requires the digest, or a full implementation
+revision, because a tag can be repointed after the card is published. Fields
+the orchestration did not supply render as
 `not recorded (not supplied by the orchestration input)`.
 
 Keep the file with the skill and refresh it whenever the skill, eval dataset,

@@ -167,10 +167,41 @@ class TestNormalization:
         }
 
     @pytest.mark.parametrize(("length", "accepted"), [(255, True), (256, False)])
-    def test_the_name_is_bounded_at_the_oci_maximum(self, length: int, accepted: bool) -> None:
-        """255 is the OCI NameTotalLengthMax, and it bounds the name rather than the whole reference."""
+    def test_the_path_is_bounded_at_the_oci_maximum(self, length: int, accepted: bool) -> None:
+        """255 is RepositoryNameTotalLengthMax, and it bounds the path rather than the whole reference."""
         reference = "n" * length + "@sha256:" + "0117bc2e" * 8
         assert bool(normalized_evaluated_source({"evaluator_container_revision": reference})) is accepted
+
+    @pytest.mark.parametrize(("length", "accepted"), [(255, True), (256, False)])
+    def test_a_registry_host_does_not_spend_the_path_budget(self, length: int, accepted: bool) -> None:
+        """The reference grammar bounds the path once the host is split off, not the two together."""
+        reference = "ghcr.io/" + "n" * length + "@sha256:" + "0117bc2e" * 8
+        assert bool(normalized_evaluated_source({"evaluator_container_revision": reference})) is accepted
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "NVIDIA/skillevaluator@sha256:" + "0117bc2e" * 8,
+            "ghcr.io/NVIDIA/skillevaluator@sha256:" + "0117bc2e" * 8,
+        ],
+    )
+    def test_an_uppercase_path_is_refused_with_and_without_a_registry(self, revision: str) -> None:
+        """Reading any first label as a host took the bare form and refused the same name under a registry."""
+        assert normalized_evaluated_source({"evaluator_container_revision": revision}) is None
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "localhost/team/image@sha256:" + "0117bc2e" * 8,
+            "Registry.Example.COM/team/image@sha256:" + "0117bc2e" * 8,
+            "myregistry:5000/team/image@sha256:" + "0117bc2e" * 8,
+        ],
+    )
+    def test_a_registry_host_is_localhost_dotted_or_ported(self, revision: str) -> None:
+        """Those are the three shapes the grammar reads as a host, and a host name may use any case."""
+        assert normalized_evaluated_source({"evaluator_container_revision": revision}) == {
+            "evaluator_container_revision": revision
+        }
 
     @pytest.mark.parametrize(
         "revision",
@@ -615,7 +646,10 @@ class TestStrictGateRevisionSyntax:
     def test_the_gate_mirrors_the_library_reference_grammar(self) -> None:
         """Two copies of one rule stay one rule only while their source text is identical."""
         assert benchmark_gate._CONTAINER_REFERENCE_PATTERN == source_identity._CONTAINER_REFERENCE_PATTERN
-        assert benchmark_gate._CONTAINER_NAME_MAX == source_identity._CONTAINER_NAME_MAX
+        assert benchmark_gate._CONTAINER_PATH_MAX == source_identity._CONTAINER_PATH_MAX
+        # The gate's hand copy of the revision pattern went uncompared, so it
+        # could drift from the library while the reference grammar still matched.
+        assert benchmark_gate._GIT_OBJECT_ID.pattern == source_identity._SOURCE_COMMIT.pattern
 
     def test_a_long_repository_pinned_by_digest_satisfies_a_pass(self, tmp_path: Path) -> None:
         """The reference is 140 characters, which the old whole-reference cap discarded."""
@@ -624,10 +658,42 @@ class TestStrictGateRevisionSyntax:
         assert self._container_reasons(tmp_path, reference) == []
 
     @pytest.mark.parametrize(("length", "accepted"), [(255, True), (256, False)])
-    def test_the_name_is_bounded_at_the_oci_maximum(self, tmp_path: Path, length: int, accepted: bool) -> None:
+    def test_the_path_is_bounded_at_the_oci_maximum(self, tmp_path: Path, length: int, accepted: bool) -> None:
         reference = "n" * length + "@sha256:" + "0117bc2e" * 8
         reasons = self._container_reasons(tmp_path, reference)
         assert (self._STRICT not in reasons) is accepted
+
+    @pytest.mark.parametrize(("length", "accepted"), [(255, True), (256, False)])
+    def test_a_registry_host_does_not_spend_the_path_budget(
+        self, tmp_path: Path, length: int, accepted: bool
+    ) -> None:
+        """The bound measures the path once the host is split off, as the reference grammar does."""
+        reference = "ghcr.io/" + "n" * length + "@sha256:" + "0117bc2e" * 8
+        reasons = self._container_reasons(tmp_path, reference)
+        assert (self._STRICT not in reasons) is accepted
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "NVIDIA/skillevaluator@sha256:" + "0117bc2e" * 8,
+            "ghcr.io/NVIDIA/skillevaluator@sha256:" + "0117bc2e" * 8,
+        ],
+    )
+    def test_an_uppercase_path_satisfies_no_pass_either_way(self, tmp_path: Path, revision: str) -> None:
+        """One rule for both spellings: a first label is a host only where the grammar says so."""
+        assert self._STRICT in self._container_reasons(tmp_path, revision)
+
+    @pytest.mark.parametrize(
+        "revision",
+        [
+            "localhost/team/image@sha256:" + "0117bc2e" * 8,
+            "Registry.Example.COM/team/image@sha256:" + "0117bc2e" * 8,
+            "myregistry:5000/team/image@sha256:" + "0117bc2e" * 8,
+        ],
+    )
+    def test_a_registry_host_is_localhost_dotted_or_ported(self, tmp_path: Path, revision: str) -> None:
+        """Those are the three shapes the grammar reads as a host, and a host name may use any case."""
+        assert self._container_reasons(tmp_path, revision) == []
 
     def test_a_registry_port_and_tag_still_pin_by_digest(self, tmp_path: Path) -> None:
         reference = "localhost:5000/team/image:1.2.3@sha256:" + "0117bc2e" * 8

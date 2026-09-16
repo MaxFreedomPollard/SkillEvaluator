@@ -41,20 +41,36 @@ _SOURCE_COMMIT: Final = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SOURCE_CONTENT_DIGEST: Final = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128})$")
 # An OCI reference is bounded component by component rather than as a whole.
 # One cap over the whole string counts the ``@sha256:`` suffix against the
-# repository name, which silently discards an ordinary name pinned by digest,
-# and the OCI grammar already bounds each component on its own terms.
-_CONTAINER_NAME_MAX: Final = 255
-# name: an optional registry domain (with an optional port) followed by
-# slash-separated path components; tag: an optional mutable label of at most
-# 128 characters; digest: the allowlist and exact widths used for the content
-# digest above, so an under-length or invented algorithm cannot pass.
+# repository path, which silently discards an ordinary name pinned by digest,
+# and the OCI grammar already bounds each component on its own terms. The bound
+# is that grammar's RepositoryNameTotalLengthMax, which measures the path once
+# the registry host has been split off it, so a long host name cannot spend the
+# budget a path is entitled to.
+_CONTAINER_PATH_MAX: Final = 255
+# A registry host label. Host names are matched in either case because DNS is
+# case-insensitive, unlike the path, which the grammar admits in lower case only.
+_CONTAINER_HOST_LABEL: Final = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+# name: an optional registry host followed by the slash-separated path; path:
+# that path on its own, which is what the length bound above measures; tag: an
+# optional mutable label of at most 128 characters; digest: the allowlist and
+# exact widths used for the content digest above, so an under-length or
+# invented algorithm cannot pass.
+#
+# A first component is a registry host only where the reference grammar says so:
+# it is ``localhost``, it carries a dot, or it carries a port. Anything else
+# begins the path and is held to the path's rules. Reading any single first
+# label as a host instead made the grammar asymmetric, accepting
+# ``NVIDIA/skillevaluator@sha256:...`` while refusing the same repository under
+# a registry, ``ghcr.io/NVIDIA/skillevaluator@sha256:...``; both are uppercase
+# path components, so both are refused.
 _CONTAINER_REFERENCE_PATTERN: Final = (
     r"(?P<name>"
-    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
-    r"(?::[0-9]+)?/)?"
+    rf"(?:(?:localhost|{_CONTAINER_HOST_LABEL}(?:\.{_CONTAINER_HOST_LABEL})+)(?::[0-9]+)?/"
+    rf"|{_CONTAINER_HOST_LABEL}:[0-9]+/)?"
+    r"(?P<path>"
     r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
     r"(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*"
+    r")"
     r")"
     r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?"
     r"(?:@(?P<digest>sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96}|sha512:[0-9a-f]{128}))?"
@@ -65,7 +81,7 @@ _CONTAINER_REFERENCE: Final = re.compile(_CONTAINER_REFERENCE_PATTERN)
 def is_container_revision(value: str) -> bool:
     """Return whether the value names the evaluator build that produced a card.
 
-    The name length is checked in Python rather than in the pattern because a
+    The path length is checked in Python rather than in the pattern because a
     regex cannot bound one alternation-heavy group without either duplicating
     the grammar or capping the reference as a whole, which is the bug this
     replaces.
@@ -76,7 +92,7 @@ def is_container_revision(value: str) -> bool:
         # always allowed for a published PASS.
         return True
     reference = _CONTAINER_REFERENCE.fullmatch(value)
-    if reference is None or len(reference["name"]) > _CONTAINER_NAME_MAX:
+    if reference is None or len(reference["path"]) > _CONTAINER_PATH_MAX:
         return False
     # A bare name identifies a repository, not a revision: it cannot tell a
     # reader which build ran, so it is refused here rather than published as an
