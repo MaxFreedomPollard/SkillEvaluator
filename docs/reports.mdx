@@ -370,9 +370,9 @@ For CI and tooling, two JSON entry points matter:
   tiers. Each result carries finalized gating metadata. Tier 3 is advisory by
   default and becomes blocking with `--block-on-agent-eval`; Tier 2 is blocking
   by default and becomes advisory with `--no-block-on-dedup`.
-- **The evaluated source identity**: the combined `validate` report always
-  carries a top-level `evaluated_source` object, resolved from every carrier the
-  run recorded, so the JSON and `BENCHMARK.md` name the same source tree. It is
+- **The evaluated source identity**: every JSON report always carries a
+  top-level `evaluated_source` object, resolved from every carrier the run
+  recorded, so the JSON and `BENCHMARK.md` name the same source tree. It is
   `null` when the orchestration input supplied none. Carriers that name
   different sources abort the run before any report file is written, so a
   contradictory identity is never published in one format and reported in

@@ -1144,3 +1144,56 @@ class TestConflictAbortsBeforeAnyReportIsWritten:
         assert "Traceback" not in invocation.output
         written = sorted(path.name for path in output_dir.rglob("*")) if output_dir.exists() else []
         assert [name for name in written if name.endswith((".json", ".html")) or name == "BENCHMARK.md"] == []
+
+
+class TestPartialRecordedIdentityMergesWithTheInput:
+    """A producer that recorded one field must not shadow the fields the operator supplied."""
+
+    def test_a_partial_carrier_and_the_options_publish_one_union(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Attaching the supplied identity only where none was recorded dropped the rest of it."""
+        import json
+
+        from click.testing import CliRunner
+
+        from skillevaluator import cli as cli_module
+        from skillevaluator.cli import cli
+
+        skill = _minimal_skill(tmp_path, "partial-source", "A skill whose run records only the repository.")
+        tier1 = ValidationResult(validator_name="SCHEMA")
+        tier1.add_success("schema", "ok")
+        # The documented result-metadata seam, carrying one field and no more.
+        tier1.metadata["evaluated_source"] = {"repository": "NVIDIA/NVFlare"}
+        monkeypatch.setattr(cli_module, "run_validation", lambda *_args, **_kwargs: [tier1])
+
+        output_dir = tmp_path / "out"
+        invocation = CliRunner().invoke(
+            cli,
+            [
+                "validate",
+                str(skill),
+                "--no-dedup",
+                "-r",
+                "json",
+                "-o",
+                str(output_dir),
+                "--evaluated-source-revision",
+                _COMMIT_A,
+                "--evaluator-container-revision",
+                _CONTAINER,
+            ],
+        )
+
+        assert "evaluated source" not in invocation.output
+        report = json.loads(next(output_dir.glob("*.json")).read_text(encoding="utf-8"))
+        assert report["evaluated_source"] == {
+            "repository": "NVIDIA/NVFlare",
+            "commit": _COMMIT_A,
+            "evaluator_container_revision": _CONTAINER,
+        }
+
+        card = (output_dir / "BENCHMARK.md").read_text(encoding="utf-8")
+        assert _value(card, "Evaluated source") == "`NVIDIA/NVFlare`"
+        assert _value(card, "Evaluated source revision") == f"`{_COMMIT_A}`"
+        assert _value(card, "Evaluator container revision") == f"`{_CONTAINER}`"

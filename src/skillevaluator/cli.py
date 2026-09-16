@@ -465,7 +465,7 @@ def _finalize_evaluated_source(
     results: list[ValidationResult],
     evaluated_source: dict[str, str] | None,
 ) -> None:
-    """Attach and resolve the source identity before any report is written.
+    """Resolve one source identity onto every result before a report is written.
 
     Provenance is part of every report, not just the card, so it has to be
     finalized ahead of ``emit_reports``. Resolving it afterwards published a JSON
@@ -473,17 +473,21 @@ def _finalize_evaluated_source(
     BENCHMARK.md recorded both, and let a contradictory identity reach disk as
     JSON and HTML before benchmark generation failed the run.
 
+    The supplied identity is one carrier among the ones the run recorded, not a
+    default the results get to override. The fold either raises, when two
+    carriers disagree, so a run that cannot say what it evaluated writes nothing
+    at all, or yields the union of every carrier, and that union is written back
+    so each report reads one complete identity rather than whichever fragment a
+    producer happened to record. Leaving a recorded identity in place instead
+    let a partial carrier shadow the rest: a result naming only the repository
+    published a card calling the revision and the container not recorded, though
+    the operator had supplied both.
+
     The identity rides on the results themselves, for every content type, because
     a PASS can be published without a completed Tier 3 run and so cannot rely on
-    the Tier 3 payload as its carrier. ``setdefault`` leaves an identity a
-    producer already recorded in place, and the fold across every carrier raises
-    when the two disagree, so a run that cannot say what it evaluated writes
-    nothing at all.
-
-    The supplied identity is folded in as its own carrier rather than only being
-    attached, because ``setdefault`` is silent where it declines to overwrite: a
-    result that already recorded a different source tree would otherwise publish
-    that one while the operator's orchestration input was dropped unreported.
+    the Tier 3 payload as its carrier. A run that recorded no identity anywhere
+    has none written, so an absent identity stays absent rather than becoming an
+    empty one.
     """
     from skillevaluator.source_identity import (
         EvaluatedSourceConflict,
@@ -491,12 +495,8 @@ def _finalize_evaluated_source(
         recorded_evaluated_source,
     )
 
-    if evaluated_source:
-        for result in results:
-            if isinstance(result.metadata, dict):
-                result.metadata.setdefault("evaluated_source", evaluated_source)
     try:
-        merge_evaluated_sources(
+        identity = merge_evaluated_sources(
             (evaluated_source, recorded_evaluated_source(result.metadata for result in results))
         )
     except EvaluatedSourceConflict as exc:
@@ -504,6 +504,13 @@ def _finalize_evaluated_source(
         raise click.ClickException(
             f"No report was written because the run records more than one evaluated source ({exc})."
         ) from exc
+    if not identity:
+        return
+    for result in results:
+        if isinstance(result.metadata, dict):
+            # A fresh dict per result, so mutating one result's identity later
+            # cannot rewrite what another result or the caller is holding.
+            result.metadata["evaluated_source"] = dict(identity)
 
 
 def _evaluated_source_from_options(
@@ -2288,7 +2295,9 @@ def dedup_scan(
 @click.option(
     "--evaluated-source-repository",
     default=None,
-    help="Repository (owner/name) of the source tree being evaluated, recorded on BENCHMARK.md.",
+    # This command renders no card, so it names where it does record the value:
+    # the run directory, which a later card is rendered from.
+    help="Repository (owner/name) of the source tree being evaluated, persisted into the run's run_config.json.",
 )
 @click.option(
     "--evaluated-source-revision",
