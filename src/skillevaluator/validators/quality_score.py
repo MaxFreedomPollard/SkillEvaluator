@@ -36,8 +36,8 @@ from skillevaluator.constants import (
 from skillevaluator.logging_config import get_logger
 from skillevaluator.models.quality import QualityScoreResult
 from skillevaluator.models.result import Finding, Severity, ValidationResult
-from skillevaluator.quality_config import load_quality_config
 from skillevaluator.models.skill import XML_TAG_RE
+from skillevaluator.quality_config import load_quality_config
 from skillevaluator.validators.base import ValidatorBase
 from skillevaluator.validators.frontmatter_parser import FRONTMATTER_PATTERN
 from skillevaluator.validators.markdown import markdown_link_targets
