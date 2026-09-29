@@ -249,6 +249,68 @@ class TestQualityScoreValidator:
         assert qs["overall_score"] < 90
         assert qs["skill_type"] == "guide-only"
 
+    def test_expected_headers_use_configured_deductions(self, tmp_path: Path):
+        skill_dir = _write_issue_skill(
+            tmp_path,
+            extra_body=(
+                "\n## Security\n\n"
+                "> ### Security\n\n"
+                "- Example\n  ### Security\n\n"
+                "```markdown\n### Security\n```\n"
+            ),
+        )
+        config_path = tmp_path / "quality.yaml"
+        config_path.write_text(
+            'expected_headers:\n  - heading: "## Limitations"\n    points: 2\n'
+            '  - heading: "### Security"\n    points: 7\n',
+            encoding="utf-8",
+        )
+
+        result = QualityScoreValidator(min_score=0, quality_config=config_path).validate(skill_dir)
+
+        missing_header = next(
+            finding for finding in result.findings if finding.message == "Missing expected heading: '### Security'"
+        )
+        assert missing_header.metadata["deduction"] == 7
+        assert all("## Limitations" not in finding.message for finding in result.findings)
+
+    def test_expected_header_accepts_matching_markdown_heading(self, tmp_path: Path):
+        skill_dir = _write_issue_skill(tmp_path, extra_body="\n### Security\n\nReview permissions.\n")
+        config_path = tmp_path / "quality.yaml"
+        config_path.write_text(
+            'expected_headers:\n  - heading: "### Security"\n',
+            encoding="utf-8",
+        )
+
+        result = QualityScoreValidator(min_score=0, quality_config=config_path).validate(skill_dir)
+
+        assert all("Missing expected heading" not in finding.message for finding in result.findings)
+
+    def test_expected_header_accepts_configured_alternative(self, tmp_path: Path):
+        skill_dir = _write_issue_skill(tmp_path)
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(
+            skill_md.read_text(encoding="utf-8").replace("## Prerequisites", "## Requirements"),
+            encoding="utf-8",
+        )
+
+        result = QualityScoreValidator(min_score=0).validate(skill_dir)
+
+        assert all("## Prerequisites" not in finding.message for finding in result.findings)
+
+    @pytest.mark.parametrize("alternative", ["## Common Issues", "## FAQ"])
+    def test_troubleshooting_header_accepts_configured_alternative(self, tmp_path: Path, alternative: str):
+        skill_dir = _write_issue_skill(tmp_path)
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(
+            skill_md.read_text(encoding="utf-8").replace("## Troubleshooting", alternative),
+            encoding="utf-8",
+        )
+
+        result = QualityScoreValidator(min_score=0).validate(skill_dir)
+
+        assert all("## Troubleshooting" not in finding.message for finding in result.findings)
+
     def test_bad_skill_fails_min_score(self, bad_skill):
         v = QualityScoreValidator(min_score=70)
         result = v.validate(bad_skill)

@@ -1,4 +1,13 @@
 # Default deterministic quality-check configuration.
-limitations:
-  required: true
-  heading: "## Limitations"
+expected_headers:
+  - heading: "## Prerequisites"
+    alternatives:
+      - "## Requirements"
+    points: 5
+  - heading: "## Limitations"
+    points: 5
+  - heading: "## Troubleshooting"
+    alternatives:
+      - "## Common Issues"
+      - "## FAQ"
+    points: 5
