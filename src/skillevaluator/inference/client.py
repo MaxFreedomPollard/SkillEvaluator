@@ -102,6 +102,12 @@ def _token_limit_kwargs(config: ProviderConfig, max_tokens: int | None) -> dict[
     return {"max_tokens": max_tokens}
 
 
+# The Anthropic SDK refuses a non-streaming request above 21,333 output tokens
+# (its estimate exceeds 10 minutes) before sending it, so a raised reasoning
+# budget is capped on that transport.
+_ANTHROPIC_NONSTREAMING_MAX_TOKENS = 16384
+
+
 def _temperature_kwargs(model: str, temperature: float | None) -> dict[str, float]:
     if temperature is None or not _supports_custom_temperature(model):
         return {}
@@ -286,12 +292,17 @@ class LLMClient:
        call :meth:`process`.
 
     Subclasses may override the ``default_*`` class attributes to change
-    model, token limit, or temperature without touching ``__init__``.
+    model, token limit, or temperature without touching ``__init__``. A
+    subclass that sets ``reasoning_max_tokens`` gets that larger default
+    budget for each request whose resolved model matches one of its
+    ``reasoning_model_markers``; an explicit ``max_tokens`` always wins.
     """
 
     default_model: str = LLM_VERIFY_MODEL
     default_max_tokens: int | None = None
     default_temperature: float | None = LLM_VERIFY_TEMPERATURE
+    reasoning_max_tokens: int | None = None
+    reasoning_model_markers: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -310,6 +321,7 @@ class LLMClient:
         self._base_url = base_url
         self._api_key = api_key
         self._max_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
+        self._max_tokens_explicit = max_tokens is not None
         self._temperature = temperature if temperature is not None else self.default_temperature
         retry_cfg = resolve_retry_config()
         self._retry_config = RetryConfig(
@@ -381,6 +393,24 @@ class LLMClient:
             config = replace(config, model=self._model, litellm_model=_litellm_model(config.provider, self._model))
         self._provider_config = config
         return config
+
+    def _request_max_tokens(self, config: ProviderConfig) -> int | None:
+        """Return the output-token budget for a request to the resolved target.
+
+        An explicit ``max_tokens`` always wins. Otherwise a subclass that sets
+        ``reasoning_max_tokens`` gets that budget when the resolved model
+        matches one of its ``reasoning_model_markers``, capped on the
+        Anthropic transport.
+        """
+        if self.reasoning_max_tokens is None or self._max_tokens_explicit:
+            return self._max_tokens
+        model = config.model.lower()
+        if not any(marker in model for marker in self.reasoning_model_markers):
+            return self._max_tokens
+        budget = max(self._max_tokens or 0, self.reasoning_max_tokens)
+        if config.provider == "anthropic":
+            return min(budget, _ANTHROPIC_NONSTREAMING_MAX_TOKENS)
+        return budget
 
     def _get_client(self) -> Any:
         """Lazily construct the SDK client for the selected provider."""
@@ -455,13 +485,14 @@ class LLMClient:
         config = self._resolved_config()
         client = self._get_client()
         target_key = SchemaTargetKey(config.provider, config.base_url or "", config.model)
+        max_tokens = self._request_max_tokens(config)
 
         def _invoke_provider() -> str:
             use_schema = response_schema is not None and target_key not in _SCHEMA_UNSUPPORTED_TARGETS
             if config.provider == "anthropic":
                 call_kwargs: dict[str, Any] = {
                     "model": config.model,
-                    "max_tokens": self._max_tokens or 4096,
+                    "max_tokens": max_tokens or 4096,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user_prompt}],
                     **_temperature_kwargs(config.model, self._temperature),
@@ -496,7 +527,7 @@ class LLMClient:
                     ],
                     aws_region_name=config.region,
                     **_temperature_kwargs(config.model, self._temperature),
-                    **({"max_tokens": self._max_tokens} if self._max_tokens is not None else {}),
+                    **({"max_tokens": max_tokens} if max_tokens is not None else {}),
                 )
                 content = _extract_choice_content(response)
                 if not content:
@@ -510,7 +541,7 @@ class LLMClient:
                     {"role": "user", "content": user_prompt},
                 ],
                 **_temperature_kwargs(config.model, self._temperature),
-                **_token_limit_kwargs(config, self._max_tokens),
+                **_token_limit_kwargs(config, max_tokens),
             }
             if use_schema and response_schema is not None:
                 call_kwargs["response_format"] = _build_openai_response_format(response_schema, schema_name)

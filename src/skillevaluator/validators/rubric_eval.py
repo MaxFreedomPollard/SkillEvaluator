@@ -198,27 +198,12 @@ class RubricJudge(LLMClient):
     """LLM judge that scores a skill against qualitative criteria."""
 
     default_max_tokens: int | None = RUBRIC_MAX_TOKENS
-
-    @staticmethod
-    def _resolved_model_name() -> str:
-        """Best-effort model name from the environment, ignoring config errors."""
-        try:
-            from skillevaluator.provider_config import resolve_llm_provider
-
-            return resolve_llm_provider().model
-        except Exception:
-            return ""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # A reasoning model burns the whole completion budget on hidden
-        # reasoning before emitting visible JSON, so the default cap truncates
-        # the answer mid-object. Raise it for those families unless the caller
-        # passed an explicit max_tokens.
-        if kwargs.get("max_tokens") is None:
-            model = (kwargs.get("model") or self._resolved_model_name() or "").lower()
-            if any(marker in model for marker in RUBRIC_REASONING_MODEL_MARKERS):
-                kwargs["max_tokens"] = RUBRIC_REASONING_MAX_TOKENS
-        super().__init__(*args, **kwargs)
+    # A reasoning model burns the whole completion budget on hidden reasoning
+    # before emitting visible JSON, so the default cap truncates the answer
+    # mid-object. LLMClient raises the budget per request when the resolved
+    # model is in one of these families, unless max_tokens was explicit.
+    reasoning_max_tokens: int | None = RUBRIC_REASONING_MAX_TOKENS
+    reasoning_model_markers: tuple[str, ...] = RUBRIC_REASONING_MODEL_MARKERS
 
     _SYSTEM_PROMPT = (
         "You are evaluating an AI Agent Skill documentation file (SKILL.md).\n"
