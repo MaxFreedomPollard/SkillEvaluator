@@ -27,6 +27,7 @@ from skillevaluator.constants import (
     RUBRIC_CRITERIA,
     RUBRIC_MAX_TOKENS,
     RUBRIC_MIN_SCORE,
+    RUBRIC_REASONING_EFFORT,
     RUBRIC_REASONING_MAX_TOKENS,
     RUBRIC_REASONING_MODEL_MARKERS,
 )
@@ -194,6 +195,31 @@ class _UnavailableRubricReport(dict):
     """Internal marker distinguishing transport fallback from model evidence."""
 
 
+_RUBRIC_CHECK_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "criterion": {"type": "string"},
+        "pass": {"type": "boolean"},
+        "score": {"type": "integer"},
+        "notes": {"type": "string"},
+    },
+    "required": ["id", "criterion", "pass", "score", "notes"],
+    "additionalProperties": False,
+}
+RUBRIC_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "overall_pass": {"type": "boolean"},
+        "score": {"type": "integer"},
+        "summary": {"type": "string"},
+        "checks": {"type": "array", "items": _RUBRIC_CHECK_JSON_SCHEMA},
+    },
+    "required": ["overall_pass", "score", "summary", "checks"],
+    "additionalProperties": False,
+}
+
+
 class RubricJudge(LLMClient):
     """LLM judge that scores a skill against qualitative criteria."""
 
@@ -204,6 +230,9 @@ class RubricJudge(LLMClient):
     # model is in one of these families, unless max_tokens was explicit.
     reasoning_max_tokens: int | None = RUBRIC_REASONING_MAX_TOKENS
     reasoning_model_markers: tuple[str, ...] = RUBRIC_REASONING_MODEL_MARKERS
+    default_reasoning_effort: str | None = RUBRIC_REASONING_EFFORT
+    response_schema: dict[str, Any] | None = RUBRIC_JSON_SCHEMA
+    schema_name: str = "rubric_evaluation"
 
     _SYSTEM_PROMPT = (
         "You are evaluating an AI Agent Skill documentation file (SKILL.md).\n"
@@ -554,12 +583,13 @@ class RubricEvalValidator(ValidatorBase):
             )
 
         if isinstance(report, _UnavailableRubricReport):
+            cause = f": {self._judge.last_failure}" if self._judge.last_failure else ""
             return self._record_judge_failure(
                 result,
                 report=report,
                 skill_path=skill_path,
                 manifest=manifest,
-                message="LLM judge unavailable; rubric evaluation did not run",
+                message=f"LLM judge unavailable; rubric evaluation did not run{cause}",
                 check_name="llm_unavailable",
                 suggestion="Configure a public LLM provider to enable LLM rubric evaluation",
             )

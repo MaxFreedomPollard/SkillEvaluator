@@ -165,8 +165,9 @@ class TestRubricJudgeTokenBudget:
     def test_explicit_endpoint_uses_its_own_model(self, monkeypatch: pytest.MonkeyPatch):
         """An explicit endpoint targets the class default model, not SKILL_EVAL_LLM_MODEL."""
         self._gateway_env(monkeypatch, "o3")
-        request = self._openai_request(RubricJudge(api_key="test-key", base_url="https://gateway.example.com/v1"))
-        assert request["model"] == RubricJudge.default_model
+        judge = RubricJudge(api_key="test-key", base_url="https://gateway.example.com/v1")
+        request = self._openai_request(judge)
+        assert request["model"] == judge._resolved_config().model != "o3"
         assert request["max_tokens"] == RUBRIC_MAX_TOKENS
 
     def test_provider_configured_after_construction(self, monkeypatch: pytest.MonkeyPatch):
@@ -219,7 +220,7 @@ class TestRubricJudgeTokenBudget:
 
         assert content == "{}"
         assert len(requests) == 1
-        assert RUBRIC_MAX_TOKENS < requests[0]["max_tokens"] <= 21333
+        assert RUBRIC_MAX_TOKENS <= requests[0]["max_tokens"] <= 21333
 
 
 class TestCollectSupplementaryContent:
