@@ -250,41 +250,37 @@ class TestQualityScoreValidator:
         assert qs["skill_type"] == "guide-only"
 
     def test_expected_headers_use_configured_deductions(self, tmp_path: Path):
-        skill_dir = _write_issue_skill(
-            tmp_path,
-            extra_body=(
-                "\n## Security\n\n"
-                "> ### Security\n\n"
-                "- Example\n  ### Security\n\n"
-                "```markdown\n### Security\n```\n"
-            ),
-        )
+        skill_dir = _write_issue_skill(tmp_path)
         config_path = tmp_path / "quality.yaml"
         config_path.write_text(
-            'expected_headers:\n  - heading: "## Limitations"\n    points: 2\n'
-            '  - heading: "### Security"\n    points: 7\n',
+            'expected_headers:\n  - heading: "## Limitations"\n    points: 2.0\n'
+            "    message: No limitations documented\n    suggestion: Add limitations\n"
+            '  - heading: "### Security"\n    points: 7.5\n'
+            "    message: No security notes documented\n    suggestion: Add security notes\n",
             encoding="utf-8",
         )
 
         result = QualityScoreValidator(min_score=0, quality_config=config_path).validate(skill_dir)
 
         missing_header = next(
-            finding for finding in result.findings if finding.message == "Missing expected heading: '### Security'"
+            finding for finding in result.findings if finding.message == "No security notes documented"
         )
-        assert missing_header.metadata["deduction"] == 7
-        assert all("## Limitations" not in finding.message for finding in result.findings)
+        assert missing_header.metadata["deduction"] == 7.5
+        assert missing_header.suggestion == "Add security notes"
+        assert all(finding.message != "No limitations documented" for finding in result.findings)
 
-    def test_expected_header_accepts_matching_markdown_heading(self, tmp_path: Path):
-        skill_dir = _write_issue_skill(tmp_path, extra_body="\n### Security\n\nReview permissions.\n")
+    def test_expected_header_matches_heading_text_anywhere_in_content(self, tmp_path: Path):
+        skill_dir = _write_issue_skill(tmp_path, extra_body="\n### Security Notes\n\nReview permissions.\n")
         config_path = tmp_path / "quality.yaml"
         config_path.write_text(
-            'expected_headers:\n  - heading: "### Security"\n',
+            'expected_headers:\n  - heading: "## Security"\n'
+            "    message: No security notes documented\n    suggestion: Add security notes\n",
             encoding="utf-8",
         )
 
         result = QualityScoreValidator(min_score=0, quality_config=config_path).validate(skill_dir)
 
-        assert all("Missing expected heading" not in finding.message for finding in result.findings)
+        assert all(finding.message != "No security notes documented" for finding in result.findings)
 
     def test_expected_header_accepts_configured_alternative(self, tmp_path: Path):
         skill_dir = _write_issue_skill(tmp_path)
@@ -296,7 +292,9 @@ class TestQualityScoreValidator:
 
         result = QualityScoreValidator(min_score=0).validate(skill_dir)
 
-        assert all("## Prerequisites" not in finding.message for finding in result.findings)
+        assert all(
+            finding.message != "No prerequisites/requirements documented" for finding in result.findings
+        )
 
     @pytest.mark.parametrize("alternative", ["## Common Issues", "## FAQ"])
     def test_troubleshooting_header_accepts_configured_alternative(self, tmp_path: Path, alternative: str):
@@ -309,7 +307,7 @@ class TestQualityScoreValidator:
 
         result = QualityScoreValidator(min_score=0).validate(skill_dir)
 
-        assert all("## Troubleshooting" not in finding.message for finding in result.findings)
+        assert all(finding.message != "No troubleshooting section documented" for finding in result.findings)
 
     def test_bad_skill_fails_min_score(self, bad_skill):
         v = QualityScoreValidator(min_score=70)

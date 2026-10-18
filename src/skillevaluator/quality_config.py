@@ -23,6 +23,8 @@ class ExpectedHeader(TypedDict):
     heading: str
     alternatives: list[str]
     points: float
+    message: str
+    suggestion: str
 
 
 class QualityConfig(TypedDict):
@@ -61,11 +63,26 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
             _normalize_heading(value, f"expected_headers[{index}].alternatives[{alternative_index}]")
             for alternative_index, value in enumerate(raw_alternatives)
         ]
-        points = rule.get("points", 5)
+        points = rule.get("points", 5.0)
         if isinstance(points, bool) or not isinstance(points, (int, float)) or not isfinite(points) or points < 0:
             raise QualityConfigError(
                 f"quality config: expected_headers[{index}].points must be a non-negative number"
             )
-        expected_headers.append({"heading": heading, "alternatives": alternatives, "points": float(points)})
+        message = rule.get("message")
+        suggestion = rule.get("suggestion")
+        for field, value in (("message", message), ("suggestion", suggestion)):
+            if not isinstance(value, str) or not value.strip():
+                raise QualityConfigError(
+                    f"quality config: expected_headers[{index}].{field} must be a non-empty string"
+                )
+        expected_headers.append(
+            {
+                "heading": heading,
+                "alternatives": alternatives,
+                "points": float(points),
+                "message": message,
+                "suggestion": suggestion,
+            }
+        )
 
     return {"expected_headers": expected_headers}

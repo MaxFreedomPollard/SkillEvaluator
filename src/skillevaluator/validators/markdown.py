@@ -251,23 +251,3 @@ def markdown_link_targets(content: str, *, include_images: bool = False) -> list
     html_parser.feed("".join(html_parts))
     html_parser.close()
     return html_parser.targets
-
-
-def markdown_headings(content: str) -> set[str]:
-    """Return canonical ATX forms for parsed Markdown headings."""
-    frontmatter = FRONTMATTER_PATTERN.match(content)
-    markdown_content = frontmatter.group(2) if frontmatter else content
-    tokens = _MARKDOWN_PARSER.parse(markdown_content)
-    headings: set[str] = set()
-    for index, token in enumerate(tokens[:-1]):
-        if (
-            token.type != "heading_open"
-            or token.level != 0
-            or not token.tag.startswith("h")
-            or not token.tag[1:].isdigit()
-        ):
-            continue
-        inline = tokens[index + 1]
-        if inline.type == "inline":
-            headings.add(f"{'#' * int(token.tag[1:])} {inline.content.strip()}")
-    return headings

@@ -40,7 +40,7 @@ from skillevaluator.models.skill import XML_TAG_RE
 from skillevaluator.quality_config import load_quality_config
 from skillevaluator.validators.base import ValidatorBase
 from skillevaluator.validators.frontmatter_parser import FRONTMATTER_PATTERN
-from skillevaluator.validators.markdown import markdown_headings, markdown_link_targets
+from skillevaluator.validators.markdown import markdown_link_targets
 
 logger = get_logger(__name__)
 
@@ -668,22 +668,10 @@ class QualityScoreValidator(ValidatorBase):
         elif qs.skill_type == "lib-based":
             self._check_lib_reliability(dim, skill_path)
 
-        headings = markdown_headings(content)
         for expected in self.quality_config["expected_headers"]:
             accepted_headings = [expected["heading"], *expected["alternatives"]]
-            if headings.isdisjoint(accepted_headings):
-                expected_display = " or ".join(f"'{heading}'" for heading in accepted_headings)
-                suggestion = (
-                    f"Add a {expected_display} section"
-                    if len(accepted_headings) == 1
-                    else f"Add one of these sections: {expected_display}"
-                )
-                dim.deduct(
-                    expected["points"],
-                    "info",
-                    f"Missing expected heading: {expected_display}",
-                    suggestion,
-                )
+            if not any(heading in content for heading in accepted_headings):
+                dim.deduct(expected["points"], "info", expected["message"], expected["suggestion"])
 
     def _check_script_reliability(self, dim, skill_path: Path) -> None:
         no_error_handling = []
