@@ -5,11 +5,14 @@
 
 import os
 import re
+import stat
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
 from skillevaluator.constants import SCAN_EXCLUDED_DIRS, SKILL_MANIFEST_FILE, SKILL_MANIFEST_VARIANTS
+from skillevaluator.utils.path_security import matches_filesystem_name
+from skillevaluator.utils.tier2_paths import is_link_or_reparse
 
 
 def make_timestamped_basename(prefix: str, suffix: str = "") -> str:
@@ -25,10 +28,11 @@ def make_timestamped_basename(prefix: str, suffix: str = "") -> str:
 
 
 def find_skills_in_directory(root_path: Path) -> list[Path]:
-    """Find all skill directories containing SKILL.md.
+    """Find live skill directories containing a supported manifest.
 
-    Uses case-insensitive manifest detection per SkillEvaluator spec.
-    Deduplicates results when both SKILL.md and skill.md exist.
+    Prunes configured scan exclusions and never follows linked directories.
+    Manifest files must be regular and unlinked. Both ``SKILL.md`` and
+    ``skill.md`` are accepted, with one result per skill directory.
 
     Args:
         root_path: Root directory or SKILL.md file path to search
@@ -38,14 +42,37 @@ def find_skills_in_directory(root_path: Path) -> list[Path]:
     """
     skill_dirs: set[Path] = set()
 
+    def require_manifest_file(manifest: Path) -> None:
+        try:
+            metadata = manifest.lstat()
+        except OSError as exc:
+            raise ValueError(f"Cannot inspect skill manifest: {manifest}") from exc
+        if not stat.S_ISREG(metadata.st_mode) or is_link_or_reparse(manifest) or getattr(metadata, "st_nlink", 1) != 1:
+            raise ValueError(f"Skill manifest must be a regular, unlinked file: {manifest}")
+
     if root_path.is_file():
         if root_path.name.upper() == SKILL_MANIFEST_FILE.upper():
+            require_manifest_file(root_path)
             skill_dirs.add(root_path.parent)
         return sorted(skill_dirs)
 
-    for manifest_name in SKILL_MANIFEST_VARIANTS:
-        for skill_md in root_path.rglob(manifest_name):
-            skill_dirs.add(skill_md.parent)
+    if is_link_or_reparse(root_path):
+        raise ValueError(f"Skill discovery root must be an unlinked directory: {root_path}")
+
+    def raise_walk_error(error: OSError) -> None:
+        raise ValueError(f"Cannot discover all skills: {error}") from error
+
+    for dirpath, dirnames, filenames in os.walk(root_path, onerror=raise_walk_error, followlinks=False):
+        base = Path(dirpath)
+        for name in SKILL_MANIFEST_VARIANTS:
+            if name in filenames or name in dirnames:
+                require_manifest_file(base / name)
+                skill_dirs.add(base)
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not matches_filesystem_name(base / name, SCAN_EXCLUDED_DIRS) and not is_link_or_reparse(base / name)
+        ]
 
     return sorted(skill_dirs)
 
