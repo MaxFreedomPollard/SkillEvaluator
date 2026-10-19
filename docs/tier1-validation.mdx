@@ -240,6 +240,37 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
     <Tip>
       If a quality score changes unexpectedly, inspect the finding message rather than adding keywords. The checker rewards usable instructions and evidence in their relevant context, not vocabulary alone.
     </Tip>
+
+    **Expected headings.** Reliability deducts points when `SKILL.md` lacks an expected heading. The packaged `quality-default.yaml` expects `## Prerequisites` (or `## Requirements`), `## Limitations`, and `## Troubleshooting` (or `## Common Issues` or `## FAQ`), each worth 5 points. Pass `--quality-config PATH` to `quality-check` or `validate` to use your own list instead. The file replaces the packaged defaults rather than merging with them, so copy any default entries you want to keep.
+
+    ```yaml title="quality.yaml"
+    expected_headers:
+      - heading: "## Prerequisites"
+        alternatives:
+          - "## Requirements"
+        points: 5.0
+        message: "No prerequisites/requirements documented"
+        suggestion: "Document dependencies, API keys, or setup needed"
+      - heading: "## Security"
+        points: 8.0
+        message: "No security notes documented"
+        suggestion: "Add '## Security' describing permissions and data access"
+    ```
+
+    ```bash title="Score with a custom heading list"
+    skillevaluator quality-check ./my-skill --quality-config quality.yaml
+    skillevaluator validate ./my-skill --quality-config quality.yaml
+    ```
+
+    | Field | Required | Meaning |
+    | --- | --- | --- |
+    | `heading` | Yes | A single ATX Markdown heading, such as `## Security` |
+    | `alternatives` | No | Other headings that satisfy the same entry |
+    | `points` | No (default `5.0`) | Non-negative number deducted from Reliability when no accepted heading is found |
+    | `message` | Yes | Finding message reported when the heading is missing |
+    | `suggestion` | Yes | Fix suggestion attached to the finding |
+
+    An entry is satisfied when the heading or any alternative appears anywhere in `SKILL.md` as text, so `## Security` also matches `### Security Notes` or a heading inside a code block.
   </Accordion>
 
   <Accordion title="rubric-eval — LLM-as-judge (requires a provider)">
