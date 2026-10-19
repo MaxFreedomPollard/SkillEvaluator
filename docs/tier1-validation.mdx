@@ -241,7 +241,7 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
       If a quality score changes unexpectedly, inspect the finding message rather than adding keywords. The checker rewards usable instructions and evidence in their relevant context, not vocabulary alone.
     </Tip>
 
-    **Expected headings.** Reliability deducts points when `SKILL.md` lacks an expected heading. The packaged `quality-default.yaml` expects `## Prerequisites` (or `## Requirements`), `## Limitations`, and `## Troubleshooting` (or `## Common Issues` or `## FAQ`), each worth 5 points. Pass `--quality-config PATH` to `quality-check` or `validate` to use your own list instead. The file replaces the packaged defaults rather than merging with them, so copy any default entries you want to keep.
+    **Expected headings.** Reliability deducts points when `SKILL.md` lacks an expected heading. The packaged `quality-default.yaml` expects `## Prerequisites` (or `## Requirements`), `## Limitations`, and `## Troubleshooting` (or `## Common Issues` or `## FAQ`), each worth 5 points. Pass `--quality-config PATH` to `quality-check`, `tier1`, or `validate` to use your own list instead. The file replaces the packaged defaults rather than merging with them, so copy any default entries you want to keep.
 
     ```yaml title="quality.yaml"
     expected_headers:
@@ -259,6 +259,7 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
 
     ```bash title="Score with a custom heading list"
     skillevaluator quality-check ./my-skill --quality-config quality.yaml
+    skillevaluator tier1 ./my-skill --quality-config quality.yaml
     skillevaluator validate ./my-skill --quality-config quality.yaml
     ```
 

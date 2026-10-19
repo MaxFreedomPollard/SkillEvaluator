@@ -2629,6 +2629,12 @@ def _workflow_report_options(func):
     "--llm/--no-llm", default=None, help="Include rubric, LLM security, and verification [default: when configured]."
 )
 @click.option("--min-score", type=click.IntRange(0, 100), default=70, show_default=True)
+@click.option(
+    "--quality-config",
+    type=QUALITY_CONFIG_PATH,
+    default=None,
+    help="Override the packaged quality-default.yaml with a custom YAML file.",
+)
 @click.option("--profile", default=None, help="Validation policy profile [default: external].")
 @click.option("--previous-version", default=None, help="Previous version for version checks.")
 @_workflow_report_options
@@ -2637,6 +2643,7 @@ def _tier1_workflow(
     checks: str | None,
     llm: bool | None,
     min_score: int,
+    quality_config: Path | None,
     profile: str | None,
     previous_version: str | None,
     report_formats: tuple[str, ...],
@@ -2655,6 +2662,7 @@ def _tier1_workflow(
         checks=checks,
         llm=llm,
         min_score=min_score,
+        quality_config=quality_config,
         profile=policy,
         previous_version=previous_version,
     )

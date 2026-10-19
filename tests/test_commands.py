@@ -786,9 +786,77 @@ def test_validate_applies_custom_quality_config(monkeypatch: pytest.MonkeyPatch,
     assert "No limitations documented" not in messages
 
 
+def _tier1_quality_messages(
+    command: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *extra_args: str,
+) -> list[str]:
+    shutil.copytree(FIXTURE, tmp_path / "simple")
+    private_state = tmp_path / "private-state"
+    private_state.mkdir(mode=0o700)
+    monkeypatch.setenv("SKILLEVALUATOR_OUTPUT_PROVENANCE_KEY_FILE", str(private_state / "key"))
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            *command,
+            "simple",
+            "--checks",
+            "schema,quality",
+            "--no-llm",
+            "--min-score",
+            "0",
+            "--report",
+            "json",
+            "--output-dir",
+            "out",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads((tmp_path / "out" / "skillevaluator-tier1.json").read_text(encoding="utf-8"))
+    return [finding["message"] for result in report["results"] for finding in result["findings"]]
+
+
+@pytest.mark.parametrize("command", [["tier1"], ["tier1", "validate"]])
+def test_tier1_workflow_uses_packaged_default_quality_config(
+    command: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    messages = _tier1_quality_messages(command, tmp_path, monkeypatch)
+
+    assert "No prerequisites/requirements documented" in messages
+    assert "No limitations documented" in messages
+    assert "No troubleshooting section documented" in messages
+
+
+@pytest.mark.parametrize("command", [["tier1"], ["tier1", "validate"]])
+def test_tier1_workflow_applies_custom_quality_config(
+    command: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "quality.yaml").write_text(
+        'expected_headers:\n  - heading: "## Security"\n'
+        "    message: No security notes documented\n    suggestion: Add security notes\n",
+        encoding="utf-8",
+    )
+
+    messages = _tier1_quality_messages(command, tmp_path, monkeypatch, "--quality-config", "quality.yaml")
+
+    assert "No security notes documented" in messages
+    assert "No limitations documented" not in messages
+
+
 _INVALID_QUALITY_CONFIG_COMMANDS = [
     ["quality-check"],
     ["tier1", "quality-check"],
+    ["tier1"],
+    ["tier1", "validate"],
     ["validate", "--no-tier3", "--no-llm", "--no-tier2", "--checks", "schema,quality"],
     # The config is validated up front even when the quality check is not selected.
     ["validate", "--no-tier3", "--no-llm", "--no-tier2", "--checks", "schema"],
