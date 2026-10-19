@@ -669,6 +669,69 @@ def test_standalone_tier1_rejects_in_skill_report_output_before_validation(
     assert not output_dir.exists()
 
 
+def _quality_check_messages(
+    command: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *extra_args: str,
+) -> list[str]:
+    shutil.copytree(FIXTURE, tmp_path / "simple")
+    private_state = tmp_path / "private-state"
+    private_state.mkdir(mode=0o700)
+    monkeypatch.setenv("SKILLEVALUATOR_OUTPUT_PROVENANCE_KEY_FILE", str(private_state / "key"))
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [*command, "simple", "--min-score", "0", "--report", "json", "--output-dir", "out", *extra_args],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads((tmp_path / "out" / "skillevaluator-quality.json").read_text(encoding="utf-8"))
+    return [finding["message"] for result in report["results"] for finding in result["findings"]]
+
+
+@pytest.mark.parametrize("command", [["quality-check"], ["tier1", "quality-check"]])
+def test_quality_check_uses_packaged_default_quality_config(
+    command: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    messages = _quality_check_messages(command, tmp_path, monkeypatch)
+
+    assert "No prerequisites/requirements documented" in messages
+    assert "No limitations documented" in messages
+    assert "No troubleshooting section documented" in messages
+
+
+@pytest.mark.parametrize("command", [["quality-check"], ["tier1", "quality-check"]])
+def test_quality_check_applies_custom_quality_config(
+    command: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "quality.yaml").write_text(
+        'expected_headers:\n  - heading: "## Security"\n'
+        "    message: No security notes documented\n    suggestion: Add security notes\n",
+        encoding="utf-8",
+    )
+
+    messages = _quality_check_messages(command, tmp_path, monkeypatch, "--quality-config", "quality.yaml")
+
+    assert "No security notes documented" in messages
+    assert "No limitations documented" not in messages
+
+
+@pytest.mark.parametrize("command", [["quality-check"], ["tier1", "quality-check"]])
+def test_quality_check_rejects_missing_quality_config(command: list[str], tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli, [*command, str(FIXTURE), "--quality-config", str(tmp_path / "missing.yaml")]
+    )
+
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+
+
 def test_standalone_tier2_rejects_in_skill_report_output_before_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
