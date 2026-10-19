@@ -27,7 +27,7 @@ class ExpectedHeader(TypedDict):
 
     heading: str
     alternatives: list[str]
-    points: float
+    points: int | float
     message: str
     suggestion: str
 
@@ -94,7 +94,7 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
             _normalize_heading(value, source, f"{location}.alternatives[{alternative_index}]")
             for alternative_index, value in enumerate(raw_alternatives)
         ]
-        points = rule.get("points", 5.0)
+        points = rule.get("points", 5)
         if isinstance(points, bool) or not isinstance(points, (int, float)) or not isfinite(points) or points < 0:
             raise QualityConfigError(f"{source}: {location}.points must be a non-negative number")
         # message and suggestion are optional; omitted ones get generic text naming the headings.
@@ -119,7 +119,7 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
             {
                 "heading": heading,
                 "alternatives": alternatives,
-                "points": float(points),
+                "points": points,
                 "message": message,
                 "suggestion": suggestion,
             }

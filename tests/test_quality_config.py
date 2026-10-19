@@ -15,25 +15,27 @@ def test_packaged_default_quality_config_is_available() -> None:
         {
             "heading": "## Prerequisites",
             "alternatives": ["## Requirements"],
-            "points": 5.0,
+            "points": 5,
             "message": "No prerequisites/requirements documented",
             "suggestion": "Document dependencies, API keys, or setup needed",
         },
         {
             "heading": "## Limitations",
             "alternatives": [],
-            "points": 5.0,
+            "points": 5,
             "message": "No limitations documented",
             "suggestion": "Add '## Limitations' section with known issues/constraints",
         },
         {
             "heading": "## Troubleshooting",
             "alternatives": ["## Common Issues", "## FAQ"],
-            "points": 5.0,
+            "points": 5,
             "message": "No troubleshooting section documented",
             "suggestion": "Add '## Troubleshooting' with Error/Cause/Solution patterns",
         },
     ]
+    # Upstream deducted the int 5, so reports keep "deduction": 5 rather than 5.0.
+    assert all(type(rule["points"]) is int for rule in config["expected_headers"])
 
 
 def test_quality_config_can_be_overridden(tmp_path: Path) -> None:
@@ -55,7 +57,7 @@ def test_quality_config_can_be_overridden(tmp_path: Path) -> None:
         {
             "heading": "## Failure Constellations",
             "alternatives": ["## Known Failures"],
-            "points": 5.0,
+            "points": 5,
             "message": "No failure constellations documented",
             "suggestion": "Add '## Failure Constellations'",
         },

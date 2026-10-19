@@ -248,11 +248,11 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
       - heading: "## Prerequisites"
         alternatives:
           - "## Requirements"
-        points: 5.0
+        points: 5
         message: "No prerequisites/requirements documented"
         suggestion: "Document dependencies, API keys, or setup needed"
       - heading: "## Security"
-        points: 8.0
+        points: 8
         message: "No security notes documented"
         suggestion: "Add '## Security' describing permissions and data access"
       - heading: "## Examples"
@@ -268,7 +268,7 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
     | --- | --- | --- |
     | `heading` | Yes | A single ATX Markdown heading, such as `## Security` |
     | `alternatives` | No | Other headings that satisfy the same entry |
-    | `points` | No (default `5.0`) | Non-negative number deducted from Reliability when no accepted heading is found |
+    | `points` | No (default `5`) | Non-negative number deducted from Reliability when no accepted heading is found |
     | `message` | No | Finding message reported when the heading is missing. Defaults to `Missing expected heading: '## Examples'`, listing any alternatives |
     | `suggestion` | No | Fix suggestion attached to the finding. Defaults to `Add a '## Examples' section`, or `Add one of these sections: ...` when there are alternatives |
 
