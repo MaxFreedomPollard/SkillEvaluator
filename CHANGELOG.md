@@ -47,6 +47,17 @@ All notable changes to SkillEvaluator are documented in this file.
   and Mosaic backends. Runta's `mode` and Mosaic's `volume`, `persist`,
   `enable_ssh`, `build_args`, and `build_target` kwargs are reserved because they
   bypass the task image or let state and access outlive one isolated trial.
+- `--quality-config PATH` on `validate`, `quality-check`, and `tier1` loads the
+  deterministic quality check's expected Markdown headings from a YAML file
+  instead of the built-in list. Each `expected_headers` entry sets a `heading`
+  and optional `alternatives`, `points` (default 5), `message`, and
+  `suggestion`; omitted message and suggestion text is generated from the
+  headings. Without the flag, the packaged `quality-default.yaml` reproduces
+  the previous Prerequisites, Limitations, and Troubleshooting checks and
+  wording, so default scores are unchanged. An invalid file (bad YAML, unknown
+  keys, duplicate headings, non-heading values) is rejected before validation
+  starts with exit code 2 and a message naming the file and field, even when
+  `--checks` leaves out `quality`.
 
 ### Changed
 
