@@ -732,6 +732,45 @@ def test_quality_check_rejects_missing_quality_config(command: list[str], tmp_pa
     assert "does not exist" in result.output
 
 
+_INVALID_QUALITY_CONFIG_COMMANDS = [
+    ["quality-check"],
+    ["tier1", "quality-check"],
+    ["validate", "--no-tier3", "--no-llm", "--no-tier2", "--checks", "schema,quality"],
+    # The config is validated up front even when the quality check is not selected.
+    ["validate", "--no-tier3", "--no-llm", "--no-tier2", "--checks", "schema"],
+]
+
+
+@pytest.mark.parametrize("command", _INVALID_QUALITY_CONFIG_COMMANDS)
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ("not: [valid\n", "invalid YAML: line 2, column 1:"),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    point: 10\n'
+            "    message: Missing\n    suggestion: Add it\n",
+            "unknown key(s) in expected_headers[0]: point",
+        ),
+    ],
+)
+def test_cli_rejects_invalid_quality_config_as_usage_error(
+    command: list[str],
+    config: str,
+    expected: str,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(config, encoding="utf-8")
+
+    result = CliRunner().invoke(cli, [*command, str(FIXTURE), "--quality-config", str(config_path)])
+
+    output = _plain_text(result.output)
+    assert result.exit_code == 2, result.output
+    assert "Invalid value for '--quality-config'" in output
+    assert expected in output
+    assert "Traceback" not in output
+
+
 def test_standalone_tier2_rejects_in_skill_report_output_before_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

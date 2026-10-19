@@ -271,6 +271,12 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
     | `suggestion` | Yes | Fix suggestion attached to the finding |
 
     An entry is satisfied when the heading or any alternative appears anywhere in `SKILL.md` as text, so `## Security` also matches `### Security Notes` or a heading inside a code block.
+
+    The file is checked before any validation runs. A file that is missing, unreadable, not UTF-8, invalid YAML, has an unknown key (such as `point` instead of `points`), or lists the same heading twice is a usage error: the command exits with code 2 and names the file and the problem. `validate` checks the file even when `--checks` leaves out `quality`.
+
+    ```text title="Example error"
+    Error: Invalid value for '--quality-config': quality.yaml: unknown key(s) in expected_headers[0]: point (allowed: alternatives, heading, message, points, suggestion)
+    ```
   </Accordion>
 
   <Accordion title="rubric-eval — LLM-as-judge (requires a provider)">
@@ -363,7 +369,7 @@ Bundled Python scanners resolve next to the SkillEvaluator interpreter before `P
 | --- | --- |
 | `0` | Success — every gate passed |
 | `1` | Validation failed — a check failed or required scanner evidence is incomplete |
-| `2` | Usage error — an unknown flag, a value outside an option's type or choices, or a target path that does not exist |
+| `2` | Usage error — an unknown flag, a value outside an option's type or choices, a target path that does not exist, or an invalid `--quality-config` file |
 
 Tier 1 checks always gate the exit code inside `validate`. Tier 2 gates when it runs unless `--no-block-on-dedup` is set. Tier 3 is advisory unless `--block-on-agent-eval` is set. The `quality` check passes when the composite score reaches `--min-score` (default `70`). Reports record the effective gate membership for every tier so saved evidence and process status agree.
 

@@ -84,3 +84,53 @@ def test_quality_config_rejects_invalid_expected_headers(tmp_path: Path, config:
 
     with pytest.raises(QualityConfigError, match="expected_headers"):
         load_quality_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("config", "match"),
+    [
+        (
+            "expected_headers: []\nexpected_header: []\n",
+            r"unknown key\(s\) in top level: expected_header",
+        ),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    point: 10\n'
+            "    message: Missing\n    suggestion: Add it\n",
+            r"unknown key\(s\) in expected_headers\[0\]: point",
+        ),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    message: Missing\n    suggestion: Add it\n'
+            '  - heading: "## Limits"\n    alternatives:\n      - "##  Limitations"\n'
+            "    message: Missing\n    suggestion: Add it\n",
+            r"duplicate heading '## Limitations' in expected_headers\[1\] \(already listed in expected_headers\[0\]\)",
+        ),
+    ],
+)
+def test_quality_config_rejects_unknown_keys_and_duplicate_headings(
+    tmp_path: Path, config: str, match: str
+) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(config, encoding="utf-8")
+
+    with pytest.raises(QualityConfigError, match=match):
+        load_quality_config(config_path)
+
+
+def test_quality_config_errors_name_the_file_and_yaml_position(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text("expected_headers: [\n", encoding="utf-8")
+
+    with pytest.raises(QualityConfigError) as exc_info:
+        load_quality_config(config_path)
+
+    message = str(exc_info.value)
+    assert message.startswith(f"{config_path}: invalid YAML: line 2, column 1: ")
+    assert "\n" not in message
+
+
+def test_quality_config_rejects_non_utf8_file(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text("expected_headers: []\n", encoding="utf-16")
+
+    with pytest.raises(QualityConfigError, match="not valid UTF-8"):
+        load_quality_config(config_path)
