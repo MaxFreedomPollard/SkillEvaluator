@@ -282,6 +282,38 @@ class TestQualityScoreValidator:
 
         assert all(finding.message != "No security notes documented" for finding in result.findings)
 
+    # Matching is a case-sensitive substring test on the raw SKILL.md text, not a
+    # parsed-heading match. These cases pin that behavior in both directions.
+    @pytest.mark.parametrize(
+        ("extra_body", "satisfied"),
+        [
+            pytest.param("\n## Security\n\nReview permissions.\n", True, id="exact-heading"),
+            pytest.param("\n### Security\n\nReview permissions.\n", True, id="deeper-heading-level"),
+            pytest.param("\n## Security and more\n\nReview permissions.\n", True, id="longer-heading-text"),
+            pytest.param("\n```markdown\n## Security\n```\n", True, id="inside-code-block"),
+            pytest.param("\nSee the ## Security notes below.\n", True, id="inside-prose"),
+            pytest.param("\n# Security\n\nReview permissions.\n", False, id="shallower-heading-level"),
+            pytest.param("\n## security\n\nReview permissions.\n", False, id="different-case"),
+            pytest.param("\n##Security\n\nReview permissions.\n", False, id="no-space-after-hashes"),
+            pytest.param("\nSecurity\n========\n\nReview permissions.\n", False, id="setext-heading"),
+        ],
+    )
+    def test_expected_header_matches_heading_as_text_anywhere(
+        self, tmp_path: Path, extra_body: str, satisfied: bool
+    ):
+        skill_dir = _write_issue_skill(tmp_path, extra_body=extra_body)
+        config_path = tmp_path / "quality.yaml"
+        config_path.write_text(
+            'expected_headers:\n  - heading: "## Security"\n'
+            "    message: No security notes documented\n    suggestion: Add security notes\n",
+            encoding="utf-8",
+        )
+
+        result = QualityScoreValidator(min_score=0, quality_config=config_path).validate(skill_dir)
+
+        messages = [finding.message for finding in result.findings]
+        assert ("No security notes documented" not in messages) is satisfied
+
     def test_expected_header_accepts_configured_alternative(self, tmp_path: Path):
         skill_dir = _write_issue_skill(tmp_path)
         skill_md = skill_dir / "SKILL.md"
