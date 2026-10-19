@@ -133,8 +133,12 @@ All notable changes to SkillEvaluator are documented in this file.
 ### Fixed
 
 - Catalog validation now includes nested and lowercase skill manifests, skips
-  generated directories consistently, and keeps reports for skills with the
-  same basename separate instead of silently leaving skills out of the verdict.
+  generated directories, and stops at skill boundaries to avoid validating
+  bundled templates as separate skills. Linked skill directories and unreadable
+  directories appear as failures in the catalog summary without stopping other
+  skills. Linked manifests retain direct-target validation behavior, plugin
+  discovery errors produce findings, and reports and external Tier 3 results
+  preserve catalog-relative paths for skills with the same basename.
 - Tier 3 now uses one versioned, equal-weight five-dimension overall-score
   policy across Harbor rewards, pass@k, Skill Lift, reports, comparisons, and
   best-agent selection. Previously, some paths averaged all six evaluators

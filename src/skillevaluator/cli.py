@@ -1044,7 +1044,23 @@ def _print_catalog_summary(total: int, failures: list[tuple[str, str]], reports_
 CATALOG_SUMMARY_FILENAME = "catalog-summary.json"
 
 
-def _catalog_child_argv_from_ctx(ctx: click.Context, skill_dir: Path, output_dir: Path) -> list[str]:
+def _catalog_results_dir(ctx: click.Context, skill_dir: Path, catalog_root: Path) -> Path | None:
+    """Preserve catalog-relative parents under an external Tier 3 results root."""
+    import os
+
+    from skillevaluator.tier3.results_location import ENV_RESULTS_DIR
+
+    configured = ctx.params.get("results_dir")
+    if configured is None:
+        configured = os.environ.get(ENV_RESULTS_DIR)
+    if not configured:
+        return None
+    return Path(configured).expanduser() / skill_dir.relative_to(catalog_root).parent
+
+
+def _catalog_child_argv_from_ctx(
+    ctx: click.Context, skill_dir: Path, output_dir: Path, *, catalog_root: Path | None = None
+) -> list[str]:
     """Rebuild ``validate`` argv from the active Click context (pytest-safe)."""
     params = ctx.params
     argv: list[str] = ["validate", str(skill_dir)]
@@ -1127,8 +1143,9 @@ def _catalog_child_argv_from_ctx(ctx: click.Context, skill_dir: Path, output_dir
         argv.extend(["--agent-model", str(override)])
     if params.get("grading_mode"):
         argv.extend(["--grading-mode", str(params["grading_mode"])])
-    if params.get("results_dir"):
-        argv.extend(["--results-dir", str(params["results_dir"])])
+    results_dir = _catalog_results_dir(ctx, skill_dir, catalog_root) if catalog_root else params.get("results_dir")
+    if results_dir is not None:
+        argv.extend(["--results-dir", str(results_dir)])
     for skill in params.get("include_skills") or ():
         argv.extend(["--include-skills", str(skill)])
     if params.get("copy_repo"):
@@ -1267,6 +1284,7 @@ def _validate_catalog(
     skill_dirs: list[Path],
     output_dir: Path,
     workers: int = 1,
+    discovery_problems: dict[Path, str] | None = None,
 ) -> None:
     """Run the full validate pipeline once per skill in the catalog.
 
@@ -1281,13 +1299,19 @@ def _validate_catalog(
             "validate each skill separately with its own previous version"
         )
 
+    discovery_problems = discovery_problems or {}
     if workers > 1:
         _validate_catalog_parallel(
-            ctx, skill_dirs=skill_dirs, catalog_root=resolved_target, output_dir=output_dir, workers=workers
+            ctx,
+            skill_dirs=skill_dirs,
+            catalog_root=resolved_target,
+            output_dir=output_dir,
+            workers=workers,
+            discovery_problems=discovery_problems,
         )
         return
 
-    failures: list[tuple[str, str]] = []
+    failures = [(path.relative_to(resolved_target).as_posix(), reason) for path, reason in discovery_problems.items()]
     meta_key = "skillevaluator_catalog_report_root"
     previous_catalog_root = ctx.meta.get(meta_key)
     ctx.meta[meta_key] = output_dir
@@ -1296,12 +1320,15 @@ def _validate_catalog(
         for index, skill_dir in enumerate(skill_dirs, start=1):
             skill_name = skill_dir.relative_to(resolved_target).as_posix()
             _print_catalog_divider(index, len(skill_dirs), skill_name)
+            if skill_dir in discovery_problems:
+                continue
             skill_output = output_dir / skill_name
             overrides = {
                 **ctx.params,
                 "target_path": skill_dir,
                 "content_type": "skill",
                 "output_dir": skill_output,
+                "results_dir": _catalog_results_dir(ctx, skill_dir, resolved_target),
             }
             reason = ""
             try:
@@ -1345,10 +1372,12 @@ def _validate_catalog_parallel(
     catalog_root: Path,
     output_dir: Path,
     workers: int,
+    discovery_problems: dict[Path, str] | None = None,
 ) -> None:
     """Validate catalog skills concurrently in isolated child processes."""
     from skillevaluator.reporting.console_ui import make_view_console
 
+    discovery_problems = discovery_problems or {}
     if not skill_dirs:
         _write_catalog_summary(output_dir, [])
         _print_catalog_summary(0, [], output_dir)
@@ -1363,14 +1392,15 @@ def _validate_catalog_parallel(
     jobs = [
         {
             "skill_name": skill_name,
-            "argv": _catalog_child_argv_from_ctx(ctx, skill_dir, output_dir / skill_name),
+            "argv": _catalog_child_argv_from_ctx(ctx, skill_dir, output_dir / skill_name, catalog_root=catalog_root),
             "cwd": workdir,
             "output_dir": str(output_dir / skill_name),
         }
         for skill_dir in skill_dirs
+        if skill_dir not in discovery_problems
         for skill_name in [skill_dir.relative_to(catalog_root).as_posix()]
     ]
-    failures: list[tuple[str, str]] = []
+    failures = [(path.relative_to(catalog_root).as_posix(), reason) for path, reason in discovery_problems.items()]
     worker_reports: dict[str, str | None] = {}
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(_run_catalog_skill_worker, job) for job in jobs]
@@ -1961,15 +1991,15 @@ def validate(
     from skillevaluator.utils.helpers import find_skills_in_directory
 
     catalog_skill_dirs: list[Path] = []
+    discovery_problems: dict[Path, str] = {}
     if (
         resolved_type in (CONTENT_TYPE_SKILL, CONTENT_TYPE_UNKNOWN)
         and target_path.is_dir()
-        and not any((target_path / name).exists() for name in SKILL_MANIFEST_VARIANTS)
+        and not any(
+            (target_path / name).exists() or (target_path / name).is_symlink() for name in SKILL_MANIFEST_VARIANTS
+        )
     ):
-        try:
-            catalog_skill_dirs = find_skills_in_directory(target_path)
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from exc
+        catalog_skill_dirs = find_skills_in_directory(target_path, problems=discovery_problems)
     is_catalog = bool(catalog_skill_dirs)
     # Quiet (default) swaps the implicit CLI reporter for HTML+JSON, while an
     # explicit -r cli is a no-file contract. Skills and catalogs additionally
@@ -1998,6 +2028,7 @@ def validate(
             skill_dirs=catalog_skill_dirs,
             output_dir=output_dir,
             workers=workers,
+            discovery_problems=discovery_problems,
         )
         return
 

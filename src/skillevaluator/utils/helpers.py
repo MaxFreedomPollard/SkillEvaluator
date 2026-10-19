@@ -5,7 +5,6 @@
 
 import os
 import re
-import stat
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,52 +26,67 @@ def make_timestamped_basename(prefix: str, suffix: str = "") -> str:
     return f"{prefix}-{stamp}{suffix}"
 
 
-def find_skills_in_directory(root_path: Path) -> list[Path]:
+def find_skills_in_directory(root_path: Path, *, problems: dict[Path, str] | None = None) -> list[Path]:
     """Find live skill directories containing a supported manifest.
 
     Prunes configured scan exclusions and never follows linked directories.
-    Manifest files must be regular and unlinked. Both ``SKILL.md`` and
-    ``skill.md`` are accepted, with one result per skill directory.
+    Stops at each skill boundary so bundled templates are not separate skills.
+    Both ``SKILL.md`` and ``skill.md`` are accepted. Manifest validation stays
+    with the per-skill validators, as it does for direct skill targets.
 
     Args:
         root_path: Root directory or SKILL.md file path to search
+        problems: Collect discovery failures by directory instead of raising.
+            Failed directories are included in the result for catalog reporting.
 
     Returns:
         Sorted list of unique paths to skill directories
     """
     skill_dirs: set[Path] = set()
 
-    def require_manifest_file(manifest: Path) -> None:
-        try:
-            metadata = manifest.lstat()
-        except OSError as exc:
-            raise ValueError(f"Cannot inspect skill manifest: {manifest}") from exc
-        if not stat.S_ISREG(metadata.st_mode) or is_link_or_reparse(manifest) or getattr(metadata, "st_nlink", 1) != 1:
-            raise ValueError(f"Skill manifest must be a regular, unlinked file: {manifest}")
+    def record_problem(directory: Path, message: str) -> None:
+        if problems is None:
+            raise ValueError(message)
+        problems[directory] = message
+        skill_dirs.add(directory)
 
     if root_path.is_file():
         if root_path.name.upper() == SKILL_MANIFEST_FILE.upper():
-            require_manifest_file(root_path)
             skill_dirs.add(root_path.parent)
         return sorted(skill_dirs)
 
     if is_link_or_reparse(root_path):
-        raise ValueError(f"Skill discovery root must be an unlinked directory: {root_path}")
+        record_problem(root_path, f"Skill discovery root must be an unlinked directory: {root_path}")
+        return sorted(skill_dirs)
 
-    def raise_walk_error(error: OSError) -> None:
-        raise ValueError(f"Cannot discover all skills: {error}") from error
+    def record_walk_error(error: OSError) -> None:
+        record_problem(Path(error.filename) if error.filename else root_path, f"Cannot discover skills: {error}")
 
-    for dirpath, dirnames, filenames in os.walk(root_path, onerror=raise_walk_error, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(root_path, onerror=record_walk_error, followlinks=False):
         base = Path(dirpath)
-        for name in SKILL_MANIFEST_VARIANTS:
-            if name in filenames or name in dirnames:
-                require_manifest_file(base / name)
-                skill_dirs.add(base)
-        dirnames[:] = [
-            name
-            for name in dirnames
-            if not matches_filesystem_name(base / name, SCAN_EXCLUDED_DIRS) and not is_link_or_reparse(base / name)
-        ]
+        if any(name in filenames or name in dirnames for name in SKILL_MANIFEST_VARIANTS):
+            skill_dirs.add(base)
+            dirnames.clear()
+            continue
+        retained = []
+        for name in dirnames:
+            directory = base / name
+            if matches_filesystem_name(directory, SCAN_EXCLUDED_DIRS):
+                continue
+            if is_link_or_reparse(directory):
+                try:
+                    has_manifest = any(
+                        (directory / manifest).exists() or (directory / manifest).is_symlink()
+                        for manifest in SKILL_MANIFEST_VARIANTS
+                    )
+                except OSError as exc:
+                    record_problem(directory, f"Cannot inspect linked skill directory {directory}: {exc}")
+                    continue
+                if has_manifest:
+                    record_problem(directory, f"Linked skill directory is not followed: {directory}")
+                continue
+            retained.append(name)
+        dirnames[:] = retained
 
     return sorted(skill_dirs)
 
