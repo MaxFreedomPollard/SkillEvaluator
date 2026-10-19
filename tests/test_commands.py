@@ -732,6 +732,60 @@ def test_quality_check_rejects_missing_quality_config(command: list[str], tmp_pa
     assert "does not exist" in result.output
 
 
+def _validate_quality_messages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *extra_args: str) -> list[str]:
+    shutil.copytree(FIXTURE, tmp_path / "simple")
+    private_state = tmp_path / "private-state"
+    private_state.mkdir(mode=0o700)
+    monkeypatch.setenv("SKILLEVALUATOR_OUTPUT_PROVENANCE_KEY_FILE", str(private_state / "key"))
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "validate",
+            "--no-tier3",
+            "simple",
+            "--no-llm",
+            "--no-tier2",
+            "--tier1-checks",
+            "schema,quality",
+            "--min-score",
+            "0",
+            "--report",
+            "json",
+            "--output-dir",
+            "out",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    (report_path,) = (tmp_path / "out").glob("skillevaluator-output-*.json")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    return [finding["message"] for result in report["results"] for finding in result["findings"]]
+
+
+def test_validate_uses_packaged_default_quality_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    messages = _validate_quality_messages(tmp_path, monkeypatch)
+
+    assert "No prerequisites/requirements documented" in messages
+    assert "No limitations documented" in messages
+    assert "No troubleshooting section documented" in messages
+
+
+def test_validate_applies_custom_quality_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "quality.yaml").write_text(
+        'expected_headers:\n  - heading: "## Security"\n'
+        "    message: No security notes documented\n    suggestion: Add security notes\n",
+        encoding="utf-8",
+    )
+
+    messages = _validate_quality_messages(tmp_path, monkeypatch, "--quality-config", "quality.yaml")
+
+    assert "No security notes documented" in messages
+    assert "No limitations documented" not in messages
+
+
 _INVALID_QUALITY_CONFIG_COMMANDS = [
     ["quality-check"],
     ["tier1", "quality-check"],
