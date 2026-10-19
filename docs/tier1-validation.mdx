@@ -255,6 +255,7 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
         points: 8.0
         message: "No security notes documented"
         suggestion: "Add '## Security' describing permissions and data access"
+      - heading: "## Examples"
     ```
 
     ```bash title="Score with a custom heading list"
@@ -268,8 +269,10 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
     | `heading` | Yes | A single ATX Markdown heading, such as `## Security` |
     | `alternatives` | No | Other headings that satisfy the same entry |
     | `points` | No (default `5.0`) | Non-negative number deducted from Reliability when no accepted heading is found |
-    | `message` | Yes | Finding message reported when the heading is missing |
-    | `suggestion` | Yes | Fix suggestion attached to the finding |
+    | `message` | No | Finding message reported when the heading is missing. Defaults to `Missing expected heading: '## Examples'`, listing any alternatives |
+    | `suggestion` | No | Fix suggestion attached to the finding. Defaults to `Add a '## Examples' section`, or `Add one of these sections: ...` when there are alternatives |
+
+    The packaged defaults set `message` and `suggestion` explicitly, so their findings keep the original wording.
 
     An entry is satisfied when the heading or any alternative appears anywhere in `SKILL.md` as text, so `## Security` also matches `### Security Notes` or a heading inside a code block.
 

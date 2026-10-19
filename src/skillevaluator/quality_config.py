@@ -97,11 +97,16 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
         points = rule.get("points", 5.0)
         if isinstance(points, bool) or not isinstance(points, (int, float)) or not isfinite(points) or points < 0:
             raise QualityConfigError(f"{source}: {location}.points must be a non-negative number")
-        message = rule.get("message")
-        suggestion = rule.get("suggestion")
+        # message and suggestion are optional; omitted ones get generic text naming the headings.
+        accepted_display = " or ".join(f"'{accepted}'" for accepted in (heading, *alternatives))
+        message = rule.get("message", f"Missing expected heading: {accepted_display}")
+        suggestion = rule.get(
+            "suggestion",
+            f"Add a {accepted_display} section" if not alternatives else f"Add one of these sections: {accepted_display}",
+        )
         for field, value in (("message", message), ("suggestion", suggestion)):
             if not isinstance(value, str) or not value.strip():
-                raise QualityConfigError(f"{source}: {location}.{field} must be a non-empty string")
+                raise QualityConfigError(f"{source}: {location}.{field} must be a non-empty string when set")
 
         for accepted in (heading, *alternatives):
             if accepted in seen_headings:

@@ -77,8 +77,9 @@ def test_quality_config_can_be_overridden(tmp_path: Path) -> None:
         'expected_headers:\n  - heading: "##   "\n',
         'expected_headers:\n  - heading: "## Limitations"\n    alternatives: not-a-list\n',
         'expected_headers:\n  - heading: "## Limitations"\n    points: -1\n',
-        'expected_headers:\n  - heading: "## Limitations"\n    suggestion: Add it\n',
-        'expected_headers:\n  - heading: "## Limitations"\n    message: Missing\n',
+        'expected_headers:\n  - heading: "## Limitations"\n    message: ""\n',
+        'expected_headers:\n  - heading: "## Limitations"\n    suggestion:\n',
+        'expected_headers:\n  - heading: "## Limitations"\n    message: [Missing]\n',
     ],
 )
 def test_quality_config_rejects_invalid_expected_headers(tmp_path: Path, config: str) -> None:
@@ -87,6 +88,27 @@ def test_quality_config_rejects_invalid_expected_headers(tmp_path: Path, config:
 
     with pytest.raises(QualityConfigError, match="expected_headers"):
         load_quality_config(config_path)
+
+
+def test_quality_config_generates_message_and_suggestion_when_omitted(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(
+        'expected_headers:\n  - heading: "## Security"\n'
+        '  - heading: "## Prerequisites"\n    alternatives:\n      - "## Requirements"\n    points: 5\n'
+        '  - heading: "## Limitations"\n    message: No limitations documented\n',
+        encoding="utf-8",
+    )
+
+    config = load_quality_config(config_path)
+
+    assert [(rule["message"], rule["suggestion"]) for rule in config["expected_headers"]] == [
+        ("Missing expected heading: '## Security'", "Add a '## Security' section"),
+        (
+            "Missing expected heading: '## Prerequisites' or '## Requirements'",
+            "Add one of these sections: '## Prerequisites' or '## Requirements'",
+        ),
+        ("No limitations documented", "Add a '## Limitations' section"),
+    ]
 
 
 @pytest.mark.parametrize(
