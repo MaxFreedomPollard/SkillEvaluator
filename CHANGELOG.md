@@ -142,6 +142,12 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ### Fixed
 
+- Tier 3 error recovery now scores unrecovered command failures as zero and
+  includes them in fault counts and skill-failure verdicts/report reasons.
+  Host and bundled verifier detection agree and prefer explicit exit status,
+  avoiding penalties for successful output such as `0 errors`.
+
+
 - Tier 3 reports an inconclusive result when every observed positive with-skill
   trial has zero activation, and omits skill-lift comparisons for that agent.
   Activation counts are reported separately; negative controls and missing

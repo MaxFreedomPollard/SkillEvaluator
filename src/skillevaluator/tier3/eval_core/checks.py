@@ -5238,23 +5238,20 @@ def check_error_recovery(
             "agent_faults": 0,
         }
 
-    error_keywords = [
-        "error",
-        "traceback",
-        "exception",
-        "status=failed",
-        "status=error",
-        "not found",
-        "command not found",
-        "permission denied",
-        "no such file",
-        "filenotfounderror",
-        "modulenotfounderror",
-        "connectionrefused",
-        "timeout",
-    ]
-    # Match exit_code=N / "exit code N" for any nonzero N (not just 1/2).
-    nonzero_exit_re = re.compile(r"(?:exit_code|exit\s+code)\s*[=:]?\s*(?!0\b)(\d+)", re.IGNORECASE)
+    # Explicit execution status takes precedence over diagnostic words in stdout.
+    exit_status_re = re.compile(
+        r"\b(?:exit_code|exit\s+code|process\s+exited\s+with\s+code)\s*[=:]?\s*(-?\d+)\b",
+        re.IGNORECASE,
+    )
+    # Match diagnostic forms, not prose such as "0 errors" or "error handling".
+    failure_text_re = re.compile(
+        r"\b(?:error|exception)\s*:|^\s*(?:error|exception|timeout|connectionrefused)\s*$"
+        r"|\b\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
+        r"|\bstatus\s*=\s*(?:failed|error)\b"
+        r"|\b(?:command not found|no such file(?: or directory)?|permission denied)\b"
+        r"|\b(?:connection refused|connectionrefused|timed out)\b",
+        re.IGNORECASE | re.MULTILINE,
+    )
     skill_fault_keywords = [
         "no such file",
         "filenotfounderror",
@@ -5267,10 +5264,10 @@ def check_error_recovery(
     ]
 
     def _is_failure(tc: dict[str, Any]) -> bool:
-        obs = str(tc.get("observation", "")).lower()
-        if nonzero_exit_re.search(obs):
-            return True
-        return any(kw in obs for kw in error_keywords)
+        obs = str(tc.get("observation", ""))
+        if status := exit_status_re.search(obs):
+            return int(status.group(1)) != 0
+        return failure_text_re.search(obs) is not None
 
     def _cmd_text(tc: dict[str, Any]) -> str:
         return _command_text(tc)
@@ -5328,8 +5325,8 @@ def check_error_recovery(
                 break
 
     first_attempt_clean = len(failures) == 0
-    skill_faults = sum(1 for c in corrections if c["fault"] == "skill")
-    agent_faults = sum(1 for c in corrections if c["fault"] == "agent")
+    skill_faults = sum(1 for f in failures if f["fault"] == "skill")
+    agent_faults = sum(1 for f in failures if f["fault"] == "agent")
     unrecovered_failures = [f for f in failures if not f["recovered"]]
 
     if first_attempt_clean:
