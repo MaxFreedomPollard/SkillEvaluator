@@ -161,3 +161,32 @@ def test_quality_config_rejects_non_utf8_file(tmp_path: Path) -> None:
 
     with pytest.raises(QualityConfigError, match="not valid UTF-8"):
         load_quality_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("config", "match"),
+    [
+        (
+            'expected_headers:\n  - heading: "## Prerequisites"\nexpected_headers:\n  - heading: "## Security"\n',
+            r"invalid YAML: line 3, column 1: duplicate key 'expected_headers'",
+        ),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    points: 5\n    points: 10\n',
+            r"invalid YAML: line 4, column 5: duplicate key 'points'",
+        ),
+        ("expected_headers: " + "[" * 10000 + "]" * 10000 + "\n", "invalid YAML: nesting is too deep"),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    points: ' + "9" * 400 + "\n",
+            r"expected_headers\[0\]\.points must be a non-negative number",
+        ),
+    ],
+    ids=["duplicate-top-level-key", "duplicate-rule-key", "deep-nesting", "points-overflow"],
+)
+def test_quality_config_rejects_duplicate_keys_and_pathological_values(
+    tmp_path: Path, config: str, match: str
+) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(config, encoding="utf-8")
+
+    with pytest.raises(QualityConfigError, match=match):
+        load_quality_config(config_path)

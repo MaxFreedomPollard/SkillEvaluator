@@ -54,6 +54,27 @@ def _reject_unknown_keys(mapping: dict, allowed: frozenset[str], source: str, lo
         )
 
 
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """SafeLoader that rejects repeated mapping keys instead of keeping the last value."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError:
+                continue  # unhashable keys are rejected by the base constructor
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping", node.start_mark, f"duplicate key {key!r}", key_node.start_mark
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 def _yaml_error_detail(exc: yaml.YAMLError) -> str:
     mark = getattr(exc, "problem_mark", None)
     problem = getattr(exc, "problem", None)
@@ -71,9 +92,11 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
     except OSError as exc:
         raise QualityConfigError(f"{source}: cannot read file: {exc.strerror or exc}") from exc
     try:
-        raw = yaml.safe_load(text)
+        raw = yaml.load(text, Loader=_UniqueKeySafeLoader)  # nosec B506
     except yaml.YAMLError as exc:
         raise QualityConfigError(f"{source}: invalid YAML: {_yaml_error_detail(exc)}") from exc
+    except RecursionError as exc:
+        raise QualityConfigError(f"{source}: invalid YAML: nesting is too deep") from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("expected_headers"), list):
         raise QualityConfigError(f"{source}: expected_headers must be a list")
     _reject_unknown_keys(raw, _TOP_LEVEL_KEYS, source, "top level")
@@ -95,7 +118,13 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
             for alternative_index, value in enumerate(raw_alternatives)
         ]
         points = rule.get("points", 5)
-        if isinstance(points, bool) or not isinstance(points, (int, float)) or not isfinite(points) or points < 0:
+        try:
+            valid_points = (
+                not isinstance(points, bool) and isinstance(points, (int, float)) and isfinite(points) and points >= 0
+            )
+        except OverflowError:  # isfinite() on an int too large for a float
+            valid_points = False
+        if not valid_points:
             raise QualityConfigError(f"{source}: {location}.points must be a non-negative number")
         # message and suggestion are optional; omitted ones get generic text naming the headings.
         accepted_display = " or ".join(f"'{accepted}'" for accepted in (heading, *alternatives))
