@@ -5245,8 +5245,8 @@ def check_error_recovery(
     )
     # Match diagnostic forms, not prose such as "0 errors" or "error handling".
     failure_text_re = re.compile(
-        r"\b(?:error|exception|timeout)\s*:|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
-        r"|\b\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
+        r"\b(?:error|exception)\s*:|\btimeout\s*:(?!\s*\d)|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
+        r"|^\s*\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
         r"|\bstatus\s*=\s*(?:failed|error)\b"
         r"|\b(?:command not found|no such file(?: or directory)?|permission denied)\b"
         r"|\b(?:connection refused|connectionrefused|timed out)\b|:\s*not found\b",
@@ -5344,7 +5344,7 @@ def check_error_recovery(
         reason = f"{agent_faults} agent error(s), no skill defects"
 
     return {
-        "passed": first_attempt_clean or skill_faults == 0,
+        "passed": first_attempt_clean or (skill_faults == 0 and not unrecovered_failures),
         "score": round(score, 4),
         "reason": reason,
         "first_attempt_clean": first_attempt_clean,

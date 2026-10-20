@@ -113,6 +113,8 @@ def test_unrecovered_failure_after_earlier_recovery(checker):
         "No errors found",
         "error handling example",
         "timeout configured to 30 seconds",
+        "try:\n    open(p)\nexcept FileNotFoundError:\n    pass",
+        "server:\n  timeout: 30",
     ],
 )
 def test_successful_output_is_not_failure(checker, observation):
@@ -170,3 +172,20 @@ def test_recovered_skill_fault_counted_once(checker):
     assert result["score"] == 0.75
     assert result["passed"] is False
     assert result["unrecovered_failures"] == []
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "ERROR: test failed\nexit code 1",
+        "Traceback (most recent call last):\nValueError: bad input",
+    ],
+)
+def test_unrecovered_agent_fault_report_reason(checker, observation):
+    result = checker([_call("pytest", observation)])
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert result["agent_faults"] == 1
+    assert result["skill_faults"] == 0
+    reasons = _collect_fail_reasons("skill_execution", [{"detail": {"error_recovery": result}}])
+    assert result["reason"] in reasons
