@@ -8043,11 +8043,11 @@ def check_error_recovery(tool_calls, expected_script=None):
     )
     # Match diagnostic forms, not prose such as "0 errors" or "error handling".
     failure_text_re = re.compile(
-        r"\b(?:error|exception)\s*:|^\s*(?:error|exception|timeout|connectionrefused)\s*$"
+        r"\b(?:error|exception|timeout)\s*:|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
         r"|\b\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
         r"|\bstatus\s*=\s*(?:failed|error)\b"
         r"|\b(?:command not found|no such file(?: or directory)?|permission denied)\b"
-        r"|\b(?:connection refused|connectionrefused|timed out)\b",
+        r"|\b(?:connection refused|connectionrefused|timed out)\b|:\s*not found\b",
         re.IGNORECASE | re.MULTILINE,
     )
     skill_fault_kw = [
