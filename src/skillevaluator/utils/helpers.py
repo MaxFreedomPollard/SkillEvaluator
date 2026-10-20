@@ -26,10 +26,31 @@ def make_timestamped_basename(prefix: str, suffix: str = "") -> str:
     return f"{prefix}-{stamp}{suffix}"
 
 
+def _linked_directory_contains_skill(directory: Path) -> bool:
+    """Inspect a linked target for manifests without following further links."""
+    if any((directory / name).exists() or (directory / name).is_symlink() for name in SKILL_MANIFEST_VARIANTS):
+        return True
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    for dirpath, dirnames, filenames in os.walk(directory, onerror=raise_walk_error, followlinks=False):
+        if any(name in filenames or name in dirnames for name in SKILL_MANIFEST_VARIANTS):
+            return True
+        base = Path(dirpath)
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not matches_filesystem_name(base / name, SCAN_EXCLUDED_DIRS) and not is_link_or_reparse(base / name)
+        ]
+    return False
+
+
 def find_skills_in_directory(root_path: Path, *, problems: dict[Path, str] | None = None) -> list[Path]:
     """Find live skill directories containing a supported manifest.
 
-    Prunes configured scan exclusions and never follows linked directories.
+    Prunes configured scan exclusions and never validates linked directories.
+    Linked targets are inspected only to report skipped skills as failures.
     Stops at each skill boundary so bundled templates are not separate skills.
     Both ``SKILL.md`` and ``skill.md`` are accepted. Manifest validation stays
     with the per-skill validators, as it does for direct skill targets.
@@ -75,10 +96,7 @@ def find_skills_in_directory(root_path: Path, *, problems: dict[Path, str] | Non
                 continue
             if is_link_or_reparse(directory):
                 try:
-                    has_manifest = any(
-                        (directory / manifest).exists() or (directory / manifest).is_symlink()
-                        for manifest in SKILL_MANIFEST_VARIANTS
-                    )
+                    has_manifest = _linked_directory_contains_skill(directory)
                 except OSError as exc:
                     record_problem(directory, f"Cannot inspect linked skill directory {directory}: {exc}")
                     continue

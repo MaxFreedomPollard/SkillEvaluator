@@ -245,6 +245,147 @@ def test_catalog_records_linked_skills_as_failed_entries(tmp_path: Path, workers
         assert (reports / "simple" / entries["simple"]["json_report"]).is_file()
 
 
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("include_live", [False, True])
+def test_catalog_records_linked_groups_with_nested_skills(tmp_path: Path, workers: int, include_live: bool) -> None:
+    catalog = tmp_path / "catalog"
+    catalog.mkdir()
+    if include_live:
+        _skill(catalog, "simple")
+    group = tmp_path / "store" / "team"
+    _skill(group, "nested/broken", valid=False)
+    (catalog / "team").symlink_to(group, target_is_directory=True)
+    reports = tmp_path / "reports"
+
+    result = _validate(catalog, reports, workers)
+
+    assert result.exit_code == 1, result.output
+    summary = json.loads((reports / "catalog-summary.json").read_text(encoding="utf-8"))
+    assert summary["total"] == 1 + include_live
+    assert summary["passed"] == int(include_live)
+    assert summary["failed"] == 1
+    assert summary["overall_passed"] is False
+    entries = {entry["name"]: entry for entry in summary["skills"]}
+    assert set(entries) == ({"team", "simple"} if include_live else {"team"})
+    assert entries["team"]["passed"] is False
+    assert "Linked skill directory is not followed" in entries["team"]["reason"]
+    assert "json_report" not in entries["team"]
+    assert not (group / "evals").exists()
+    if include_live:
+        assert entries["simple"]["passed"] is True
+        assert (reports / "simple" / entries["simple"]["json_report"]).is_file()
+
+
+def test_discovery_ignores_excluded_skills_in_linked_groups(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog"
+    live = _skill(catalog, "simple")
+    group = tmp_path / "store" / "team"
+    for excluded in SCAN_EXCLUDED_DIRS:
+        _skill(group, f"{excluded}/broken", valid=False)
+        _skill(group, f"nested/{excluded}/broken", valid=False)
+    (catalog / "team").symlink_to(group, target_is_directory=True)
+    problems: dict[Path, str] = {}
+
+    assert find_skills_in_directory(catalog, problems=problems) == [live]
+    assert problems == {}
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_discovery_does_not_follow_nested_links_in_linked_groups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from skillevaluator.utils import helpers
+
+    catalog = tmp_path / "catalog"
+    live = _skill(catalog, "simple")
+    group = tmp_path / "store" / "team"
+    group.mkdir(parents=True)
+    linked = catalog / "team"
+    linked.symlink_to(group, target_is_directory=True)
+    nested = group / "nested"
+    if kind == "symlink":
+        outside = tmp_path / "outside"
+        _skill(outside, "broken", valid=False)
+        nested.symlink_to(outside, target_is_directory=True)
+    else:
+        _skill(nested, "broken", valid=False)
+        real_is_link = helpers.is_link_or_reparse
+
+        def simulate_junction(path: Path) -> bool:
+            return path in {nested, linked / "nested"} or real_is_link(path)
+
+        monkeypatch.setattr(helpers, "is_link_or_reparse", simulate_junction)
+    (group / "loop").symlink_to(group, target_is_directory=True)
+    real_scandir = os.scandir
+    forbidden = {str(path) for path in (nested, linked / "nested", group / "loop", linked / "loop")}
+
+    def forbid_nested_link_walk(path):
+        assert str(path) not in forbidden, f"Followed a nested {kind} or cycle: {path}"
+        return real_scandir(path)
+
+    monkeypatch.setattr(helpers.os, "scandir", forbid_nested_link_walk)
+    problems: dict[Path, str] = {}
+
+    assert find_skills_in_directory(catalog, problems=problems) == [live]
+    assert problems == {}
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_catalog_records_unreadable_linked_groups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    catalog = tmp_path / "catalog"
+    _skill(catalog, "simple")
+    group = tmp_path / "store" / "team"
+    (group / "blocked").mkdir(parents=True)
+    linked = catalog / "team"
+    linked.symlink_to(group, target_is_directory=True)
+    real_scandir = os.scandir
+
+    def deny_linked_group(path):
+        if str(path) in {str(group / "blocked"), str(linked / "blocked")}:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr("skillevaluator.utils.helpers.os.scandir", deny_linked_group)
+    reports = tmp_path / "reports"
+
+    result = _validate(catalog, reports, workers)
+
+    assert result.exit_code == 1, result.output
+    summary = json.loads((reports / "catalog-summary.json").read_text(encoding="utf-8"))
+    entries = {entry["name"]: entry for entry in summary["skills"]}
+    assert set(entries) == {"simple", "team"}
+    assert entries["simple"]["passed"] is True
+    assert entries["team"]["passed"] is False
+    assert "Cannot inspect linked skill directory" in entries["team"]["reason"]
+    assert "Permission denied" in entries["team"]["reason"]
+    assert "json_report" not in entries["team"]
+    assert summary["overall_passed"] is False
+
+
+def test_discovery_stops_linked_group_probe_at_first_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = tmp_path / "catalog"
+    live = _skill(catalog, "simple")
+    group = tmp_path / "store" / "team"
+    skill = _skill(group, "nested/broken", valid=False)
+    (skill / "blocked").mkdir()
+    linked = catalog / "team"
+    linked.symlink_to(group, target_is_directory=True)
+    real_scandir = os.scandir
+
+    def forbid_skill_contents(path):
+        assert str(path) not in {str(skill / "blocked"), str(linked / "nested/broken/blocked")}
+        return real_scandir(path)
+
+    monkeypatch.setattr("skillevaluator.utils.helpers.os.scandir", forbid_skill_contents)
+    problems: dict[Path, str] = {}
+
+    assert find_skills_in_directory(catalog, problems=problems) == sorted([live, linked])
+    assert set(problems) == {linked}
+    assert "Linked skill directory is not followed" in problems[linked]
+
+
 @pytest.mark.parametrize("kind", ["symlink", "hardlink"])
 def test_catalog_accepts_linked_manifest_files(tmp_path: Path, kind: str) -> None:
     catalog = tmp_path / "catalog"
