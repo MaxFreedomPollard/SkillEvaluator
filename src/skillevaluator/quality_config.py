@@ -4,11 +4,13 @@
 """Configuration for deterministic quality scoring."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from importlib.resources import files
 from math import isfinite
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 import yaml
 
@@ -36,6 +38,14 @@ class QualityConfig(TypedDict):
     """Validated deterministic quality configuration."""
 
     expected_headers: list[ExpectedHeader]
+
+
+class QualityConfigProvenance(TypedDict):
+    """Which quality configuration produced a score, as recorded in reports."""
+
+    source: Literal["packaged", "custom"]
+    file: str | None
+    digest: str
 
 
 def _normalize_heading(value: object, source: str, location: str) -> str:
@@ -155,3 +165,18 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
         )
 
     return {"expected_headers": expected_headers}
+
+
+def quality_config_digest(config: QualityConfig) -> str:
+    """Return a stable digest of the normalized rules, independent of file formatting."""
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def quality_config_provenance(path: Path | None, config: QualityConfig) -> QualityConfigProvenance:
+    """Describe the effective config. Only the file name is kept, so reports do not leak local paths."""
+    return {
+        "source": "custom" if path else "packaged",
+        "file": path.name if path else None,
+        "digest": quality_config_digest(config),
+    }

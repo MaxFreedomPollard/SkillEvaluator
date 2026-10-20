@@ -55,9 +55,13 @@ All notable changes to SkillEvaluator are documented in this file.
   headings. Without the flag, the packaged `quality-default.yaml` reproduces
   the previous Prerequisites, Limitations, and Troubleshooting checks and
   wording, so default scores are unchanged. An invalid file (bad YAML, unknown
-  keys, duplicate headings, non-heading values) is rejected before validation
-  starts with exit code 2 and a message naming the file and field, even when
-  `--checks` leaves out `quality`.
+  keys, duplicate keys or headings, non-heading values) is rejected before
+  validation starts with exit code 2 and a message naming the file and field,
+  even when `--checks` leaves out `quality`. The JSON report, Markdown report,
+  and BENCHMARK.md record which config produced the quality score as
+  `quality_config` (`packaged` or `custom`, the custom file's name, a
+  `sha256:` digest of the normalized rules, and the `--min-score` pass
+  threshold, which is kept out of the digest).
 
 ### Changed
 

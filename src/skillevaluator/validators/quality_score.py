@@ -37,7 +37,7 @@ from skillevaluator.logging_config import get_logger
 from skillevaluator.models.quality import QualityScoreResult
 from skillevaluator.models.result import Finding, Severity, ValidationResult
 from skillevaluator.models.skill import XML_TAG_RE
-from skillevaluator.quality_config import load_quality_config
+from skillevaluator.quality_config import load_quality_config, quality_config_provenance
 from skillevaluator.validators.base import ValidatorBase
 from skillevaluator.validators.frontmatter_parser import FRONTMATTER_PATTERN
 from skillevaluator.validators.markdown import markdown_link_targets
@@ -133,6 +133,7 @@ class QualityScoreValidator(ValidatorBase):
     def __init__(self, min_score: int = 70, quality_config: Path | None = None) -> None:
         self.min_score = min_score
         self.quality_config = load_quality_config(quality_config)
+        self.quality_config_provenance = quality_config_provenance(quality_config, self.quality_config)
 
     @property
     def name(self) -> str:
@@ -214,8 +215,12 @@ class QualityScoreValidator(ValidatorBase):
     def validate(self, skill_path: Path) -> ValidationResult:
         """Validate a skill directory and produce quality scores."""
         if self._is_skill_directory(skill_path):
-            return self._validate_single_skill(skill_path)
-        return self._validate_folder(skill_path)
+            result = self._validate_single_skill(skill_path)
+        else:
+            result = self._validate_folder(skill_path)
+        # min_score sits beside the digest rather than in it: the digest names the rules, min_score the pass bar.
+        result.metadata["quality_config"] = {**self.quality_config_provenance, "min_score": self.min_score}
+        return result
 
     def _validate_folder(self, root: Path) -> ValidationResult:
         """Validate all skills in a folder, aggregating quality results."""

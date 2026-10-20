@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from skillevaluator.models.quality import QualityScoreResult, score_to_grade
+from skillevaluator.quality_config import load_quality_config, quality_config_digest
 from skillevaluator.validators.quality_score import QualityScoreValidator
 
 
@@ -603,6 +604,44 @@ class TestQualityScoreValidator:
         v = QualityScoreValidator()
         assert "Quality" in v.name
         assert "Correctness" in v.description
+
+    def test_result_records_packaged_quality_config(self, tmp_path: Path):
+        skill_dir = _write_issue_skill(tmp_path)
+
+        result = QualityScoreValidator().validate(skill_dir)
+
+        assert result.metadata["quality_config"] == {
+            "source": "packaged",
+            "file": None,
+            "digest": quality_config_digest(load_quality_config()),
+            "min_score": 70,
+        }
+
+    def test_result_records_custom_quality_config_file_name_only(self, tmp_path: Path):
+        skill_dir = _write_issue_skill(tmp_path)
+        config_path = tmp_path / "configs" / "team-quality.yaml"
+        config_path.parent.mkdir()
+        config_path.write_text("expected_headers: []\n", encoding="utf-8")
+
+        result = QualityScoreValidator(min_score=80, quality_config=config_path).validate(skill_dir)
+
+        assert result.metadata["quality_config"] == {
+            "source": "custom",
+            "file": "team-quality.yaml",
+            "digest": quality_config_digest({"expected_headers": []}),
+            "min_score": 80,
+        }
+
+    def test_folder_result_records_quality_config(self, tmp_path: Path):
+        _write_issue_skill(tmp_path)
+        config_path = tmp_path / "team-quality.yaml"
+        config_path.write_text("expected_headers: []\n", encoding="utf-8")
+
+        result = QualityScoreValidator(min_score=0, quality_config=config_path).validate(tmp_path)
+
+        assert result.metadata["quality_config"]["source"] == "custom"
+        assert result.metadata["quality_config"]["file"] == "team-quality.yaml"
+        assert result.metadata["quality_config"]["min_score"] == 0
 
 
 class TestQualityScoreDeterministicContracts:

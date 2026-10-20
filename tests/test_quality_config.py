@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from skillevaluator.quality_config import QualityConfigError, load_quality_config
+from skillevaluator.quality_config import (
+    QualityConfigError,
+    load_quality_config,
+    quality_config_digest,
+    quality_config_provenance,
+)
 
 
 def test_packaged_default_quality_config_is_available() -> None:
@@ -190,3 +195,34 @@ def test_quality_config_rejects_duplicate_keys_and_pathological_values(
 
     with pytest.raises(QualityConfigError, match=match):
         load_quality_config(config_path)
+
+
+def test_quality_config_digest_ignores_formatting_but_not_rules(tmp_path: Path) -> None:
+    compact = tmp_path / "compact.yaml"
+    compact.write_text('expected_headers: [{heading: "## Limitations", points: 5}]\n', encoding="utf-8")
+    verbose = tmp_path / "verbose.yaml"
+    verbose.write_text(
+        '# team rules\nexpected_headers:\n  - heading:   "##   Limitations"\n    points: 5\n',
+        encoding="utf-8",
+    )
+    changed = tmp_path / "changed.yaml"
+    changed.write_text('expected_headers:\n  - heading: "## Limitations"\n    points: 6\n', encoding="utf-8")
+
+    digest = quality_config_digest(load_quality_config(compact))
+
+    assert digest.startswith("sha256:") and len(digest) == 71
+    assert quality_config_digest(load_quality_config(verbose)) == digest
+    assert quality_config_digest(load_quality_config(changed)) != digest
+
+
+def test_quality_config_provenance_names_custom_file_without_its_directory(tmp_path: Path) -> None:
+    config_path = tmp_path / "team-quality.yaml"
+    config_path.write_text("expected_headers: []\n", encoding="utf-8")
+    config = load_quality_config(config_path)
+
+    assert quality_config_provenance(config_path, config) == {
+        "source": "custom",
+        "file": "team-quality.yaml",
+        "digest": quality_config_digest(config),
+    }
+    assert quality_config_provenance(None, load_quality_config())["file"] is None
