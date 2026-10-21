@@ -8105,6 +8105,9 @@ def check_error_recovery(tool_calls, expected_script=None):
             output,
             flags=re.IGNORECASE | re.MULTILINE,
         )
+        # Harbor appends this exact marker to Claude Code is_error results,
+        # including ordinary negative probes. Preserve all other output lines.
+        output = re.sub(r"^\[error\] tool reported failure\r?$", "", output, flags=re.MULTILINE)
         return not output.strip()
 
     def _is_failure(tc):

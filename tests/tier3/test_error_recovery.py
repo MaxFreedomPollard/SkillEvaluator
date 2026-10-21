@@ -439,3 +439,80 @@ def test_codex_optional_headers_preserve_output(checker, has_chunk_id, has_token
     assert result["passed"] is (not output)
     assert result["score"] == (0.0 if output else 1.0)
     assert len(result["failures"]) == (1 if output else 0)
+
+
+@pytest.fixture(scope="module")
+def claude_error_observation():
+    from harbor.agents.installed.claude_code import ClaudeCode
+
+    observation, metadata = ClaudeCode._format_tool_result(
+        {"type": "tool_result", "content": "Exit code 1", "is_error": True},
+        "Error: Exit code 1",
+    )
+    assert observation == "Exit code 1\n\n[error] tool reported failure"
+    assert metadata["is_error"] is True
+    return observation
+
+
+@pytest.mark.parametrize(
+    "command", ["rg TODO src", "grep needle file.txt", "test -f out.json", "[ -e out.json ]", "diff a b", "cmp -s a b"]
+)
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_claude_error_marker_allows_quiet_negative_probe(checker, claude_error_observation, command, line_ending):
+    observation = claude_error_observation.replace("\n", line_ending)
+    result = checker([_call(command, observation)])
+    assert result["passed"] is True
+    assert result["score"] == 1.0
+    assert result["failures"] == []
+
+
+@pytest.mark.parametrize(
+    "command,exit_code,extra",
+    [
+        ("rg TODO src", 1, "rg: src: Permission denied"),
+        ("rg TODO src", 1, "[error] tool reported failure\nrg: src: Permission denied"),
+        ("rg TODO src", 1, "[stderr] Permission denied"),
+        ("rg TODO src", 1, '[metadata] {"interrupted": true}'),
+        ("rg TODO src", 1, "[error] tool reported failure: interrupted"),
+        ("rg TODO src", 1, "[ERROR] tool reported failure"),
+        ("rg TODO src", 1, " [error] tool reported failure"),
+        ("rg TODO src", 2, ""),
+        ("python run.py", 1, ""),
+        ("rg TODO src; python run.py", 1, ""),
+        ("rg TODO src && python run.py", 1, ""),
+        ("rg TODO src | python run.py", 1, ""),
+        ('rg "$(python run.py)" src', 1, ""),
+        ("rg `python run.py` src", 1, ""),
+    ],
+)
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_claude_error_marker_does_not_hide_failure(
+    checker, claude_error_observation, command, exit_code, extra, line_ending
+):
+    observation = claude_error_observation.replace("Exit code 1", f"Exit code {exit_code}", 1)
+    if extra:
+        observation += "\n" + extra
+    result = checker([_call(command, observation.replace("\n", line_ending))])
+    assert result["passed"] is False
+    assert result["score"] == 0.0
+    assert len(result["unrecovered_failures"]) == 1
+
+
+def test_claude_quiet_negative_probe_is_not_successful_retry(checker, claude_error_observation):
+    result = checker(
+        [
+            _call("rg TODO src", claude_error_observation.replace("Exit code 1", "Exit code 2", 1)),
+            _call("rg TODO src", claude_error_observation),
+        ]
+    )
+    assert result["passed"] is False
+    assert result["score"] == 0.0
+    assert result["corrections"] == []
+    assert len(result["failures"]) == 1
+    assert len(result["unrecovered_failures"]) == 1
+
+
+def test_codex_output_does_not_strip_claude_marker(checker):
+    result = checker([_call("rg TODO src", _codex_output(1, "[error] tool reported failure"))])
+    assert result["passed"] is False
+    assert result["score"] == 0.0
