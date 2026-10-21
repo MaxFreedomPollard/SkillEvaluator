@@ -11,6 +11,9 @@ All notable changes to SkillEvaluator are documented in this file.
   Host and bundled verifier detection agree and prefer explicit exit status,
   avoiding penalties for successful output such as `0 errors`, Python exception
   handlers, and numeric timeout configuration.
+- Changing finding severities through a policy no longer clears an independent
+  quality-score threshold failure. A score below `--min-score` still fails,
+  and its reason appears in the terminal, HTML, benchmark, and JSON reports.
 
 ## 0.6.0 - 2026-10-20
 
