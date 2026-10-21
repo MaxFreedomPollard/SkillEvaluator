@@ -184,8 +184,28 @@ def test_quality_config_rejects_non_utf8_file(tmp_path: Path) -> None:
             'expected_headers:\n  - heading: "## Limitations"\n    points: ' + "9" * 400 + "\n",
             r"expected_headers\[0\]\.points must be a non-negative number",
         ),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    points: ' + "9" * 5000 + "\n",
+            r"invalid YAML: cannot parse a value: Exceeds the limit",
+        ),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    message: 2026-02-30\n',
+            r"invalid YAML: cannot parse a value: day is out of range",
+        ),
+        (
+            'expected_headers:\n  - heading: "## Limitations"\n    points: !!int abc\n',
+            r"invalid YAML: cannot parse a value: invalid literal for int\(\)",
+        ),
     ],
-    ids=["duplicate-top-level-key", "duplicate-rule-key", "deep-nesting", "points-overflow"],
+    ids=[
+        "duplicate-top-level-key",
+        "duplicate-rule-key",
+        "deep-nesting",
+        "points-overflow",
+        "integer-digit-limit",
+        "impossible-date",
+        "bad-explicit-tag",
+    ],
 )
 def test_quality_config_rejects_duplicate_keys_and_pathological_values(
     tmp_path: Path, config: str, match: str
