@@ -108,8 +108,6 @@ def load_quality_config(path: Path | None = None) -> QualityConfig:
     except RecursionError as exc:
         raise QualityConfigError(f"{source}: invalid YAML: nesting is too deep") from exc
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
-        # PyYAML's scalar constructors raise these directly for values such as
-        # over-long integers, impossible dates, and bad explicit tags.
         raise QualityConfigError(f"{source}: invalid YAML: cannot parse a value: {exc}") from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("expected_headers"), list):
         raise QualityConfigError(f"{source}: expected_headers must be a list")
