@@ -5286,10 +5286,10 @@ def check_error_recovery(
         # Harbor's Codex unified-exec envelope is metadata, but everything
         # after Output: is command output, even if it resembles another header.
         unified_output = re.fullmatch(
-            r"Chunk ID: [0-9a-fA-F]{6}\r?\n"
+            r"(?:Chunk ID: [0-9a-fA-F]{6}\r?\n)?"
             r"Wall time: \d+(?:\.\d+)? seconds\r?\n"
             r"Process exited with code -?\d+\r?\n"
-            r"Original token count: \d+\r?\n"
+            r"(?:Original token count: \d+\r?\n)?"
             r"Output:(?:\r?\n|\Z)(.*)",
             observation,
             flags=re.DOTALL,
@@ -5368,7 +5368,7 @@ def check_error_recovery(
             matches = (
                 _commands_similar(cmd, retry_cmd)
                 if j - i <= 5
-                else bool(cmd.strip()) and cmd.strip() == retry_cmd.strip()
+                else bool(cmd.split()) and cmd.split() == retry_cmd.split()
             )
             if matches and succeeded[j]:
                 corrections.append(

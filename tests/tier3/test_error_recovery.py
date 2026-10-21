@@ -390,3 +390,52 @@ def test_codex_quiet_probe_is_not_successful_retry(checker):
     assert len(result["failures"]) == 1
     assert result["corrections"] == []
     assert len(result["unrecovered_failures"]) == 1
+
+
+@pytest.mark.parametrize("command,retry", [("pytest  -q", "pytest -q"), ("pytest\t-q", "pytest -q")])
+def test_distant_retry_ignores_only_whitespace(checker, command, retry):
+    calls = [_call(command, "Exit code 1")]
+    calls.extend(_call(f"head -n 5 source{i}.py", _codex_output(0, "source")) for i in range(6))
+    calls.append(_call(retry, _codex_output(0, "passed")))
+    result = checker(calls)
+    assert result["score"] == 0.9
+    assert result["passed"] is True
+    assert result["corrections"][0]["steps_to_fix"] == 7
+    assert result["unrecovered_failures"] == []
+
+
+@pytest.mark.parametrize(
+    "command,retry",
+    [
+        ("pytest tests/test_app.py -x", "pytest tests/test_app.py"),
+        ("cd /app && pytest -q", "pytest -q"),
+        ("pytest -q 2>&1 | tail -20", "pytest -q 2>&1 | tail -50"),
+        ("", ""),
+        ("", " \t "),
+    ],
+)
+def test_distant_retry_keeps_tokens_strict_and_nonempty(checker, command, retry):
+    calls = [_call(command, "Exit code 1")]
+    calls.extend(_call(f"head -n 5 source{i}.py", _codex_output(0, "source")) for i in range(6))
+    calls.append(_call(retry, _codex_output(0)))
+    result = checker(calls)
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert result["corrections"] == []
+    assert len(result["unrecovered_failures"]) == 1
+
+
+@pytest.mark.parametrize("has_chunk_id,has_token_count", [(True, True), (True, False), (False, True), (False, False)])
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+@pytest.mark.parametrize("output", ["", "Permission denied", "status=failed", "Original token count: 0"])
+def test_codex_optional_headers_preserve_output(checker, has_chunk_id, has_token_count, line_ending, output):
+    observation = _codex_output(1, output)
+    if not has_chunk_id:
+        observation = observation.replace("Chunk ID: a1b2c3\n", "", 1)
+    if not has_token_count:
+        observation = observation.replace(f"Original token count: {len(output.split())}\n", "", 1)
+    observation = observation.replace("\n", line_ending)
+    result = checker([_call("rg TODO src", observation)])
+    assert result["passed"] is (not output)
+    assert result["score"] == (0.0 if output else 1.0)
+    assert len(result["failures"]) == (1 if output else 0)
