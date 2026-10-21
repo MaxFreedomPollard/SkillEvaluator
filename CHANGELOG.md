@@ -22,10 +22,26 @@ All notable changes to SkillEvaluator are documented in this file.
   `sha256:` digest of the normalized rules, and the `--min-score` pass
   threshold, which is kept out of the digest).
 
+### Fixed
+
+- Changing finding severities through a policy no longer clears an independent
+  quality-score threshold failure. A score below `--min-score` still fails,
+  and its reason appears in the terminal, HTML, benchmark, and JSON reports.
+
 ## 0.6.0 - 2026-10-20
 
 ### Added
 
+- Custom execution backends. An installed package can add an `--env-mode`
+  through the `skillevaluator.env_modes` entry-point group, naming an
+  `EnvironmentBackendSpec` with a Harbor environment class plus the `--ek`
+  kwargs, host variables, prerequisite hook, and optional agent wrappers that
+  backend accepts. Custom execution backends follow the same kwarg and
+  `runtime_env` policy as Harbor-native backends, may not forward agent,
+  provider, or other backends' credentials, cannot replace a built-in mode or
+  share a name with another installed package, are not named on published
+  benchmark cards, and can be turned off with
+  `SKILLEVALUATOR_DISABLE_CUSTOM_BACKENDS=1`.
 - Optional `skillevaluator dashboard` tables for comparing saved Tier 3 reports
   and retained runs across skills, models, harnesses, recorded harness
   features, and skill conditions. Paired with/without differences cover score,
@@ -101,7 +117,9 @@ All notable changes to SkillEvaluator are documented in this file.
 - `run_config.json` records the judge reasoning effort, and each standard
   judge's details record `judge_model_used`, `judge_reasoning_effort` and
   `judge_fallback_used`. Skill lift leaves out a case whose two conditions were
-  judged by different models and counts it in `judge_mixed_cases`.
+  judged by different models and counts it in `judge_mixed_cases`. Dashboard
+  score differences preserve this matching-judge lift, including unavailable
+  comparisons.
 - Removed the unused `CONTENT_DEDUP_LLM_*` constants and `LLM_VERIFY_MODEL`; an
   LLM client built from explicit credentials uses the provider default model.
 - Tier 3 pins the agent CLIs Harbor installs: Codex 0.161.0 and Claude Code
@@ -162,6 +180,17 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ### Fixed
 
+- Tier 3 reports preserve judge-model exclusions when calculating dimension and
+  overall lift. Native multi-step results also retain the judge provenance needed
+  for those comparisons, so fallback judges cannot turn a regression into an
+  apparent improvement. Judge-free cases retain valid lift, bounded report loads
+  use the collector's recorded comparisons, and FINAL-strategy trials use only
+  the final step's judges. The CLI displays unavailable comparisons as `n/a`.
+- The LLM judge treats a schema option reported as `unavailable` as a schema
+  rejection and retries without it, so OpenAI-compatible endpoints such as
+  DeepSeek, which answer `response_format: json_schema` with HTTP 400 and
+  "This response_format type is unavailable now", can score Tier 3 instead
+  of failing every judge call (fixes #207).
 - Tier 3 reports an inconclusive result when every observed positive with-skill
   trial has zero activation, and omits skill-lift comparisons for that agent.
   Activation counts are reported separately; negative controls and missing
