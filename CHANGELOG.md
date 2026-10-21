@@ -26,6 +26,16 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ### Added
 
+- Custom execution backends. An installed package can add an `--env-mode`
+  through the `skillevaluator.env_modes` entry-point group, naming an
+  `EnvironmentBackendSpec` with a Harbor environment class plus the `--ek`
+  kwargs, host variables, prerequisite hook, and optional agent wrappers that
+  backend accepts. Custom execution backends follow the same kwarg and
+  `runtime_env` policy as Harbor-native backends, may not forward agent,
+  provider, or other backends' credentials, cannot replace a built-in mode or
+  share a name with another installed package, are not named on published
+  benchmark cards, and can be turned off with
+  `SKILLEVALUATOR_DISABLE_CUSTOM_BACKENDS=1`.
 - Optional `skillevaluator dashboard` tables for comparing saved Tier 3 reports
   and retained runs across skills, models, harnesses, recorded harness
   features, and skill conditions. Paired with/without differences cover score,
@@ -170,6 +180,11 @@ All notable changes to SkillEvaluator are documented in this file.
   apparent improvement. Judge-free cases retain valid lift, bounded report loads
   use the collector's recorded comparisons, and FINAL-strategy trials use only
   the final step's judges. The CLI displays unavailable comparisons as `n/a`.
+- The LLM judge treats a schema option reported as `unavailable` as a schema
+  rejection and retries without it, so OpenAI-compatible endpoints such as
+  DeepSeek, which answer `response_format: json_schema` with HTTP 400 and
+  "This response_format type is unavailable now", can score Tier 3 instead
+  of failing every judge call (fixes #207).
 - Tier 3 reports an inconclusive result when every observed positive with-skill
   trial has zero activation, and omits skill-lift comparisons for that agent.
   Activation counts are reported separately; negative controls and missing
