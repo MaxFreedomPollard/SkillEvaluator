@@ -18,11 +18,27 @@ from skillevaluator.tier3.harbor.templates import eval as eval_template
 
 @pytest.fixture(params=[check_error_recovery, eval_template.check_error_recovery], ids=["host", "harbor-verifier"])
 def checker(request):
-    return request.param
+    def check(*args, **kwargs):
+        result = request.param(*args, **kwargs)
+        peer = eval_template.check_error_recovery if request.param is check_error_recovery else check_error_recovery
+        assert result == peer(*args, **kwargs)
+        return result
+
+    return check
 
 
 def _call(cmd: str, observation: str) -> dict:
     return {"action": "bash", "action_input": {"command": cmd}, "observation": observation}
+
+
+def _codex_output(exit_code: int, output: str = "") -> str:
+    return (
+        "Chunk ID: a1b2c3\n"
+        "Wall time: 0.125 seconds\n"
+        f"Process exited with code {exit_code}\n"
+        f"Original token count: {len(output.split())}\n"
+        f"Output:\n{output}"
+    )
 
 
 def test_failure_with_no_retry_is_not_first_attempt_clean(checker):
@@ -106,7 +122,7 @@ def test_unrecovered_failure_after_earlier_recovery(checker):
 @pytest.mark.parametrize(
     "observation",
     [
-        "Process exited with code 0\nFinal output:\n0 errors",
+        _codex_output(0, "0 errors"),
         "exit_code=0\nERROR: example diagnostic",
         "exit code: 0\nTraceback (most recent call last):",
         "0 errors",
@@ -127,7 +143,7 @@ def test_successful_output_is_not_failure(checker, observation):
 @pytest.mark.parametrize(
     "observation",
     [
-        "Process exited with code 7\nFinal output:\nAll done",
+        _codex_output(7, "All done"),
         "exit_code=127",
         "exit code: 42",
         "exit code -9",
@@ -210,13 +226,10 @@ def test_displayed_source_is_not_execution_failure(checker, observation):
 
 @pytest.mark.parametrize("inspections", [4, 5, 6, 8])
 def test_recovery_after_intervening_inspections(checker, inspections):
-    calls = [_call("pytest -q", "Process exited with code 1\nFinal output:\nERROR: test failed")]
-    calls.extend(
-        _call(f"sed -n '1,20p' file{i}.py", "Process exited with code 0\nFinal output:\nsource")
-        for i in range(inspections)
-    )
+    calls = [_call("pytest -q", _codex_output(1, "ERROR: test failed"))]
+    calls.extend(_call(f"sed -n '1,20p' file{i}.py", _codex_output(0, "source")) for i in range(inspections))
     calls.append({"action": "apply_patch", "action_input": {}, "observation": "Done"})
-    calls.append(_call("pytest -q", "Process exited with code 0\nFinal output:\n12 passed"))
+    calls.append(_call("pytest -q", _codex_output(0, "12 passed")))
     result = checker(calls)
     assert result["passed"] is True
     assert result["score"] == 0.9
@@ -237,9 +250,7 @@ def test_recovery_after_intervening_inspections(checker, inspections):
         "/usr/bin/grep needle file.txt",
     ],
 )
-@pytest.mark.parametrize(
-    "observation", ["Exit code 1", "status=completed\nexit_code=1", "Process exited with code 1\nFinal output:\n"]
-)
+@pytest.mark.parametrize("observation", ["Exit code 1", "status=completed\nexit_code=1", _codex_output(1)])
 def test_quiet_negative_probe_is_not_failure(checker, command, observation):
     result = checker([_call(command, observation)])
     assert result["passed"] is True
@@ -283,4 +294,99 @@ def test_negative_probe_is_not_successful_recovery(checker):
     assert result["passed"] is False
     assert result["corrections"] == []
     assert len(result["failures"]) == 1
+    assert len(result["unrecovered_failures"]) == 1
+
+
+@pytest.mark.parametrize(
+    "command,retry,inspections,observation",
+    [
+        ("pytest -q", "test -f report.json", 6, "Exit code 1"),
+        ("pytest tests/test_tools.py", "ls -la", 6, "Exit code 1"),
+        ("pytest -q", "cat pytest.ini", 8, "Exit code 1"),
+        (
+            "python scripts/convert.py in.pdf out.json",
+            'python3 -c "print(1)"',
+            6,
+            "Traceback (most recent call last):\nValueError: bad input",
+        ),
+        ("python scripts/convert.py in.pdf out.json", 'python -c "print(1)"', 6, "Exit code 1"),
+        ("pytest tests/test_api.py", "pytest tests/test_other.py", 6, "Exit code 1"),
+    ],
+)
+def test_unrelated_distant_success_does_not_recover(checker, command, retry, inspections, observation):
+    calls = [_call(command, observation)]
+    calls.extend(_call(f"head -n 5 source{i}.py", _codex_output(0, "source")) for i in range(inspections))
+    calls.append(_call(retry, _codex_output(0)))
+    result = checker(calls)
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert result["corrections"] == []
+    assert [failure["failed_cmd"] for failure in result["unrecovered_failures"]] == [command]
+
+
+@pytest.mark.parametrize("command", ["pytest -q", "python scripts/convert.py in.pdf out.json"])
+def test_same_command_recovers_after_distant_edit(checker, command):
+    calls = [_call(command, _codex_output(1, "ValueError: bad input"))]
+    calls.extend(_call(f"head -n 5 source{i}.py", _codex_output(0, "source")) for i in range(8))
+    calls.append({"action": "apply_patch", "action_input": {}, "observation": "Done"})
+    calls.append(_call(command, _codex_output(0, "done")))
+    result = checker(calls)
+    assert result["score"] == 0.9
+    assert result["passed"] is True
+    assert result["corrections"][0]["steps_to_fix"] == 10
+    assert result["unrecovered_failures"] == []
+
+
+@pytest.mark.parametrize("command", ["rg TODO src", "test -f out.json"])
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_codex_quiet_probe_header_is_not_diagnostic(checker, command, line_ending):
+    result = checker([_call(command, _codex_output(1).replace("\n", line_ending))])
+    assert result["score"] == 1.0
+    assert result["passed"] is True
+    assert result["failures"] == []
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "Permission denied",
+        "status=failed",
+        "exit_code=2",
+        "Output:",
+        "Chunk ID: a1b2c3",
+        "Wall time: 0.125 seconds",
+        "Original token count: 0",
+    ],
+)
+def test_codex_probe_output_is_never_stripped_as_metadata(checker, output):
+    result = checker([_call("rg TODO src", _codex_output(1, output))])
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "command,exit_code,output",
+    [
+        ("rg TODO src; python run.py", 1, ""),
+        ("rg TODO src | python run.py", 1, ""),
+        ('rg "$(python run.py)" src', 1, ""),
+        ("rg TODO src", 2, ""),
+        ("python run.py", 1, ""),
+        ("test -f out.json", 1, "test: invalid argument"),
+    ],
+)
+def test_codex_probe_header_does_not_hide_real_failures(checker, command, exit_code, output):
+    result = checker([_call(command, _codex_output(exit_code, output))])
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+
+
+def test_codex_quiet_probe_is_not_successful_retry(checker):
+    result = checker(
+        [_call("rg TODO src", _codex_output(2, "Permission denied")), _call("rg TODO src", _codex_output(1))]
+    )
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert len(result["failures"]) == 1
+    assert result["corrections"] == []
     assert len(result["unrecovered_failures"]) == 1

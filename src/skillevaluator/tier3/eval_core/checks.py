@@ -5242,7 +5242,7 @@ def check_error_recovery(
     # may mention exit_code=1 without describing this command's outcome.
     exit_status_re = re.compile(
         r"^[ \t]*\[?(?:exit_code|exit[ \t]+code|process[ \t]+exited[ \t]+with[ \t]+code)"
-        r"\]?[ \t]*[=:]?[ \t]*(-?\d+)\]?[ \t]*$",
+        r"\]?[ \t]*[=:]?[ \t]*(-?\d+)\]?[ \t]*\r?$",
         re.IGNORECASE | re.MULTILINE,
     )
     # Match diagnostic forms, not prose such as "0 errors" or "error handling".
@@ -5283,11 +5283,23 @@ def check_error_recovery(
             return False
         if any(word and all(char in ";&|<>()" for char in word) for word in words):
             return False
-        # Strip only converter status and the Codex output delimiter, leaving
-        # every other nonempty line as diagnostic evidence.
+        # Harbor's Codex unified-exec envelope is metadata, but everything
+        # after Output: is command output, even if it resembles another header.
+        unified_output = re.fullmatch(
+            r"Chunk ID: [0-9a-fA-F]{6}\r?\n"
+            r"Wall time: \d+(?:\.\d+)? seconds\r?\n"
+            r"Process exited with code -?\d+\r?\n"
+            r"Original token count: \d+\r?\n"
+            r"Output:(?:\r?\n|\Z)(.*)",
+            observation,
+            flags=re.DOTALL,
+        )
+        if unified_output is not None:
+            return not unified_output.group(1).strip()
+        # Other converters emit status/exit_code lines without an envelope.
         output = exit_status_re.sub("", observation)
         output = re.sub(
-            r"^[ \t]*(?:status=(?:completed|failed|error)|Final output:)[ \t]*$",
+            r"^[ \t]*status=(?:completed|failed|error)[ \t]*\r?$",
             "",
             output,
             flags=re.IGNORECASE | re.MULTILINE,
@@ -5351,7 +5363,14 @@ def check_error_recovery(
         for j in range(i + 1, len(exec_calls)):
             retry_idx, retry_call = exec_calls[j]
             retry_cmd = _cmd_text(retry_call)
-            if _commands_similar(cmd, retry_cmd) and succeeded[j]:
+            # Keep the original local correction heuristic, but require the
+            # same command and arguments for retries beyond the five-call window.
+            matches = (
+                _commands_similar(cmd, retry_cmd)
+                if j - i <= 5
+                else bool(cmd.strip()) and cmd.strip() == retry_cmd.strip()
+            )
+            if matches and succeeded[j]:
                 corrections.append(
                     {
                         "failed_cmd": cmd[:200],
