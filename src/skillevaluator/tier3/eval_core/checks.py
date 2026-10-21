@@ -5238,14 +5238,17 @@ def check_error_recovery(
             "agent_faults": 0,
         }
 
-    # Explicit execution status takes precedence over diagnostic words in stdout.
+    # Only complete status lines are execution evidence; source code and prose
+    # may mention exit_code=1 without describing this command's outcome.
     exit_status_re = re.compile(
-        r"\b(?:exit_code|exit\s+code|process\s+exited\s+with\s+code)\s*[=:]?\s*(-?\d+)\b",
-        re.IGNORECASE,
+        r"^[ \t]*\[?(?:exit_code|exit[ \t]+code|process[ \t]+exited[ \t]+with[ \t]+code)"
+        r"\]?[ \t]*[=:]?[ \t]*(-?\d+)\]?[ \t]*$",
+        re.IGNORECASE | re.MULTILINE,
     )
     # Match diagnostic forms, not prose such as "0 errors" or "error handling".
     failure_text_re = re.compile(
-        r"\b(?:error|exception)\s*:|\btimeout\s*:(?!\s*\d)|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
+        r"^\s*(?:[\w.+/-]+:\s*)*(?:error|exception)\s*:"
+        r"|\btimeout\s*:(?!\s*\d)|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
         r"|^\s*\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
         r"|\bstatus\s*=\s*(?:failed|error)\b"
         r"|\b(?:command not found|no such file(?: or directory)?|permission denied)\b"
@@ -5263,10 +5266,41 @@ def check_error_recovery(
         "modulenotfounderror",
     ]
 
+    def _is_quiet_negative_probe(tc: dict[str, Any], observation: str) -> bool:
+        # Exit 1 is a normal negative answer for these simple commands. Be
+        # conservative: keep diagnostics and compound shell commands as failures.
+        command = _command_text(tc)
+        if any(marker in command for marker in ("\n", "\r", "`", "$(")):
+            return False
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        try:
+            words = list(lexer)
+        except ValueError:
+            return False
+        if not words or words[0].rsplit("/", 1)[-1] not in {"grep", "rg", "test", "[", "diff", "cmp"}:
+            return False
+        if any(word and all(char in ";&|<>()" for char in word) for word in words):
+            return False
+        # Strip only converter status and the Codex output delimiter, leaving
+        # every other nonempty line as diagnostic evidence.
+        output = exit_status_re.sub("", observation)
+        output = re.sub(
+            r"^[ \t]*(?:status=(?:completed|failed|error)|Final output:)[ \t]*$",
+            "",
+            output,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        return not output.strip()
+
     def _is_failure(tc: dict[str, Any]) -> bool:
         obs = str(tc.get("observation", ""))
         if status := exit_status_re.search(obs):
-            return int(status.group(1)) != 0
+            exit_code = int(status.group(1))
+            if exit_code == 1 and _is_quiet_negative_probe(tc, obs):
+                return False
+            return exit_code != 0
         return failure_text_re.search(obs) is not None
 
     def _cmd_text(tc: dict[str, Any]) -> str:
@@ -5283,6 +5317,13 @@ def check_error_recovery(
         obs_lower = error_obs.lower()
         return any(kw in obs_lower for kw in skill_fault_keywords)
 
+    failed = [_is_failure(call) for _, call in exec_calls]
+    succeeded: list[bool] = []
+    for i, (_, call) in enumerate(exec_calls):
+        status = exit_status_re.search(str(call.get("observation", "")))
+        # A benign negative query is not a successful retry of an earlier error.
+        succeeded.append(not failed[i] and (status is None or int(status.group(1)) == 0))
+
     corrections: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     seen_fail_indices: set[int] = set()
@@ -5290,7 +5331,7 @@ def check_error_recovery(
     for i, (orig_idx, call) in enumerate(exec_calls):
         if orig_idx in seen_fail_indices:
             continue
-        if not _is_failure(call):
+        if not failed[i]:
             continue
 
         cmd = _cmd_text(call)
@@ -5307,10 +5348,10 @@ def check_error_recovery(
         }
         failures.append(failure)
 
-        for j in range(i + 1, min(i + 6, len(exec_calls))):
+        for j in range(i + 1, len(exec_calls)):
             retry_idx, retry_call = exec_calls[j]
             retry_cmd = _cmd_text(retry_call)
-            if _commands_similar(cmd, retry_cmd) and not _is_failure(retry_call):
+            if _commands_similar(cmd, retry_cmd) and succeeded[j]:
                 corrections.append(
                     {
                         "failed_cmd": cmd[:200],

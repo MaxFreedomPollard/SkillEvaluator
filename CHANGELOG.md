@@ -10,7 +10,10 @@ All notable changes to SkillEvaluator are documented in this file.
   includes them in fault counts and failure verdicts/report reasons.
   Host and bundled verifier detection agree and prefer explicit exit status,
   avoiding penalties for successful output such as `0 errors`, Python exception
-  handlers, and numeric timeout configuration.
+  handlers, and numeric timeout configuration. Printed source text containing
+  exit codes or error strings is not treated as execution status; quiet exit-1
+  search and file-test probes remain clean. Successful retries are recognized
+  even after more than five intervening execution calls.
 - Changing finding severities through a policy no longer clears an independent
   quality-score threshold failure. A score below `--min-score` still fails,
   and its reason appears in the terminal, HTML, benchmark, and JSON reports.
