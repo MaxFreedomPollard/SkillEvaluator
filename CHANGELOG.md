@@ -22,6 +22,14 @@ All notable changes to SkillEvaluator are documented in this file.
   `sha256:` digest of the normalized rules, and the `--min-score` pass
   threshold, which is kept out of the digest).
 
+### Changed
+
+- README and onboarding docs now offer two first-run paths: a lightweight,
+  keyless quality check on a bundled skill, or an NVIDIA Build rubric evaluation
+  with eligible free prototyping access. Installation adds extras as needed,
+  and the guides separate quality results from full scanner and live-agent
+  evidence.
+
 ### Fixed
 
 - Changing finding severities through a policy no longer clears an independent
