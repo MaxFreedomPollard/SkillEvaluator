@@ -46,8 +46,8 @@ Per-trial columns are means over the row's measured trials and stay blank when
 any trial is unmeasured. They help compare rows with different trial counts,
 but runs on different datasets are still not like-for-like.
 The comparison table reports **with skill minus without skill** differences,
-with percentage changes for usage relative to without skill. A negative usage difference means less usage;
-a positive score difference means higher performance. Comparisons stay within
+with percentage changes for usage relative to without skill. A negative usage
+difference means less usage; a positive score difference means higher performance. Comparisons stay within
 the same report and agent and require successful conditions with matching trial
 coverage, the same dataset digest, and the same attempt policy.
 The score difference preserves the evaluator's recorded Skill Lift, including
@@ -133,4 +133,3 @@ An explicitly imported adverse condition uses `conditions.adverse`,
 agent payload. It appears in the performance table; usage differences are
 calculated for with/without pairs only. Adverse conditions are import-only
 metadata: no evaluator command produces them, and the dashboard does not run them.
-
