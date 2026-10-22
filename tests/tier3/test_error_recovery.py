@@ -651,3 +651,115 @@ def test_unflagged_result_keeps_text_check(trajectory_checker):
     result = trajectory_checker(trajectory)
     assert result["score"] == 0.0
     assert result["passed"] is False
+
+
+def _opencode_trajectory(tmp_path, *commands: tuple[str, str, int | None]) -> dict:
+    """Convert OpenCode bash events with Harbor's converter, which keeps only the output."""
+    from harbor.agents.installed.opencode import OpenCode
+
+    events = []
+    for index, (command, output, exit_code) in enumerate(commands):
+        state = {
+            "status": "completed",
+            "input": {"command": command, "description": "run"},
+            "output": output,
+            "metadata": {"exit": exit_code, "output": output, "description": "run"},
+        }
+        events.extend(
+            [
+                {"type": "step_start", "timestamp": 1000 + index, "sessionID": "s1", "part": {}},
+                {
+                    "type": "tool_use",
+                    "timestamp": 1000 + index,
+                    "sessionID": "s1",
+                    "part": {"type": "tool", "tool": "bash", "callID": f"call_{index}", "state": state},
+                },
+                {
+                    "type": "step_finish",
+                    "timestamp": 1000 + index,
+                    "sessionID": "s1",
+                    "part": {"tokens": {}, "cost": 0},
+                },
+            ]
+        )
+    agent = OpenCode(logs_dir=tmp_path, model_name="openai/gpt-5")
+    return agent._convert_events_to_trajectory(events).to_json_dict()
+
+
+OPENCODE_PYTEST_FAIL = (
+    "F.\n=================================== FAILURES ===================================\n"
+    "___ test_total ___\n\n    def test_total():\n>       assert total([1, 2]) == 4\nE       assert 3 == 4\n\n"
+    "tests/test_calc.py:4: AssertionError\n"
+    "=========================== short test summary info ============================\n"
+    "FAILED tests/test_calc.py::test_total - assert 3 == 4\n1 failed, 1 passed in 0.03s\n"
+)
+OPENCODE_FAILURES = {
+    "pytest": ("pytest -q", OPENCODE_PYTEST_FAIL, 1),
+    "pytest-collection": (
+        "pytest -q",
+        "==== short test summary info ====\nERROR tests/test_calc.py\n!!! Interrupted: 1 error during collection !!!\n",
+        2,
+    ),
+    "unittest": ("python -m unittest", "F\n----\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n", 1),
+    "tsc": (
+        "npx tsc --noEmit",
+        "src/a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.\n\nFound 1 error in src/a.ts:3\n",
+        2,
+    ),
+    "jest": (
+        "npm test",
+        "> demo@1.0.0 test\n> jest\n\n FAIL  src/sum.test.js\n  x adds 1 + 2 to equal 3 (3 ms)\n\nTests:       1 failed, 1 total\n",
+        1,
+    ),
+    "npm-err": ("npm install", "npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/nope\n", 1),
+    "npm-error": ("npm run build", "npm error Lifecycle script `build` failed with error:\nnpm error code 1\n", 1),
+    "go-test": (
+        "go test ./...",
+        "--- FAIL: TestTotal (0.00s)\n    calc_test.go:8: got 3, want 4\nFAIL\nFAIL\tdemo\t0.01s\n",
+        1,
+    ),
+    "timeout": (
+        "python long_job.py",
+        "partial output\n\n<bash_metadata>\nbash tool terminated command after exceeding timeout 120000 ms\n</bash_metadata>",
+        None,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(OPENCODE_FAILURES))
+def test_opencode_unrecovered_test_and_build_failures(trajectory_checker, tmp_path, name):
+    trajectory = _opencode_trajectory(tmp_path, OPENCODE_FAILURES[name])
+    assert "is_error" not in trajectory_checker.extract(trajectory)[0]
+    result = trajectory_checker(trajectory)
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert result["first_attempt_clean"] is False
+    assert len(result["unrecovered_failures"]) == 1
+
+
+@pytest.mark.parametrize("name", ["pytest", "tsc"])
+def test_opencode_recovered_test_and_build_failures(trajectory_checker, tmp_path, name):
+    failure = OPENCODE_FAILURES[name]
+    trajectory = _opencode_trajectory(tmp_path, failure, (failure[0], "..\n2 passed in 0.02s\n", 0))
+    result = trajectory_checker(trajectory)
+    assert result["score"] == 0.9
+    assert result["passed"] is True
+    assert result["first_attempt_clean"] is False
+    assert len(result["corrections"]) == 1
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "..\n2 passed in 0.02s\n",
+        "Tests:       0 failed, 4 passed, 4 total\n",
+        "test result: ok. 3 passed; 0 failed; 0 ignored\n",
+        "FAIL_FAST = True\nFAILED = 'failed'\nERROR = 2\n",
+        "2 passed, 1 xfailed in 0.04s\n",
+    ],
+)
+def test_opencode_passing_test_output_is_not_failure(trajectory_checker, tmp_path, output):
+    result = trajectory_checker(_opencode_trajectory(tmp_path, ("pytest -q", output, 0)))
+    assert result["score"] == 1.0
+    assert result["passed"] is True
+    assert result["failures"] == []

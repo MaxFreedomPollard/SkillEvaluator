@@ -8050,14 +8050,21 @@ def check_error_recovery(tool_calls, expected_script=None):
         r"\]?[ \t]*[=:]?[ \t]*(-?\d+)\]?[ \t]*\r?$",
         re.IGNORECASE | re.MULTILINE,
     )
-    # Match diagnostic forms, not prose such as "0 errors" or "error handling".
+    # Results without any exit status (Harbor's OpenCode trajectories keep only
+    # the output) are judged by diagnostic forms, not prose such as "0 errors"
+    # or "error handling".
     failure_text_re = re.compile(
         r"^\s*(?:[\w.+/-]+:\s*)*(?:error|exception)\s*:"
         r"|\btimeout\s*:(?!\s*\d)|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
         r"|^\s*\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
         r"|\bstatus\s*=\s*(?:failed|error)\b"
         r"|\b(?:command not found|no such file(?: or directory)?|permission denied)\b"
-        r"|\b(?:connection refused|connectionrefused|timed out)\b|:\s*not found\b",
+        r"|\b(?:connection refused|connectionrefused|timed out)\b|:\s*not found\b"
+        # Test and build failures (pytest, unittest, jest and go test summaries,
+        # tsc, npm) and OpenCode's note for a command stopped at its timeout.
+        r"|(?-i:^[ \t]*(?:---[ \t]+)?(?:FAIL(?:ED)?|ERROR)\b(?![ \t]*=))"
+        r"|\b[1-9]\d* failed\b|\berror TS\d+\b|^npm (?:ERR!|error\b)"
+        r"|\bbash tool terminated command after exceeding timeout\b",
         re.IGNORECASE | re.MULTILINE,
     )
     skill_fault_kw = [
