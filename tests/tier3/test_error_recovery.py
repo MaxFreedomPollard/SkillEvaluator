@@ -799,3 +799,76 @@ def test_diagnostics_without_status_still_fail(checker, observation):
     result = checker([_call("python run.py", observation)])
     assert result["score"] == 0.0
     assert result["passed"] is False
+
+
+def _exit_one_observations(output: str, exit_code: int = 1) -> list[str]:
+    """The same failed command as a plain status line, a Harbor Claude Code result and a Codex result."""
+    from harbor.agents.installed.claude_code import ClaudeCode
+
+    content = f"Exit code {exit_code}\n{output}".rstrip()
+    claude_code, _ = ClaudeCode._format_tool_result(
+        {"type": "tool_result", "content": content, "is_error": True}, f"Error: {content}"
+    )
+    return [content, claude_code, _codex_output(exit_code, output)]
+
+
+@pytest.mark.parametrize(
+    "command,output",
+    [
+        ("grep -c TODO a.py", "0"),
+        ("grep -rc TODO src", "src/a.py:0\nsrc/b.py:0"),
+        ("rg --count TODO src", ""),
+        ("grep -rn TODO src 2>/dev/null", ""),
+        ("grep -q foo a.txt >/dev/null 2>&1", ""),
+        ("rg TODO src &>/dev/null", ""),
+        ("cd /app && grep -rn TODO src", ""),
+        ('cd "my app"; rg TODO', ""),
+        ("pwd && rg --files -g AGENTS.md .", "/workspace"),
+        ("cd /app && pwd; grep -rn TODO src", "/app"),
+        ("LC_ALL=C grep -q foo a.txt", ""),
+        ("ls | grep foo", ""),
+        ("ls src | grep -c test_", "0"),
+        ("test -f out.json && echo exists", ""),
+        ("[[ -f out.json ]]", ""),
+        ("command -v jq", ""),
+        ("which jq", ""),
+        ("git diff --quiet", ""),
+        ("git diff --quiet -- src/app.py", ""),
+    ],
+)
+def test_quiet_probe_variants_are_not_failures(checker, command, output):
+    for observation in _exit_one_observations(output):
+        result = checker([_call(command, observation)])
+        assert result["score"] == 1.0, observation
+        assert result["passed"] is True
+        assert result["failures"] == []
+
+
+@pytest.mark.parametrize(
+    "command,output,exit_code",
+    [
+        ("grep TODO a.py", "0", 1),
+        ("grep -c TODO a.py", "0\ngrep: b.py: Permission denied", 1),
+        ("grep -c TODO a.py", "3", 1),
+        ("grep -rn TODO src 2>/dev/null", "", 2),
+        ("cd /app && rg TODO src", "rg: src: No such file or directory", 1),
+        ("cd /app && python run.py", "", 1),
+        ("cd /app && grep -rn TODO src; python run.py", "", 1),
+        ("pwd && rg --files -g AGENTS.md .", "/workspace\nrg: ./private: Permission denied", 1),
+        ("pwd; python run.py", "/workspace", 1),
+        ("ls | python run.py", "", 1),
+        ("test -f out.json && python run.py", "", 1),
+        ("pytest -q 2>/dev/null", "", 1),
+        ("command jq", "", 1),
+        ("which jq", "which: no jq in (/usr/bin:/bin)", 1),
+        ("git diff", "", 1),
+        ("git diff --exit-code", "diff --git a/app.py b/app.py", 1),
+        ("git status --short", "fatal: not a git repository (or any of the parent directories): .git", 128),
+    ],
+)
+def test_quiet_probe_variants_keep_real_failures(checker, command, output, exit_code):
+    for observation in _exit_one_observations(output, exit_code):
+        result = checker([_call(command, observation)])
+        assert result["score"] == 0.0, observation
+        assert result["passed"] is False
+        assert len(result["unrecovered_failures"]) == 1
