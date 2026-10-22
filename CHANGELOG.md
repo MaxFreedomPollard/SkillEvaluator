@@ -7,14 +7,19 @@ All notable changes to SkillEvaluator are documented in this file.
 ### Fixed
 
 - Tier 3 error recovery now scores unrecovered command failures as zero and
-  includes them in fault counts and failure verdicts/report reasons.
-  Host and bundled verifier detection agree and prefer explicit exit status,
-  avoiding penalties for successful output such as `0 errors`, Python exception
-  handlers, and numeric timeout configuration. Printed source text containing
-  exit codes or error strings is not treated as execution status; quiet exit-1
-  search and file-test probes remain clean, including Codex unified-exec
-  observations. Beyond the original five-call retry window, only a successful
-  repeat of the same command and arguments counts as recovery.
+  includes them in fault counts and failure verdicts/report reasons. Host and
+  bundled verifier detection agree and use a result's execution status when it
+  has one: a Codex exit code, a whole `exit code N` line, or Harbor marking a
+  Claude Code result as successful. Only results without a status, such as
+  OpenCode's, are judged by their text: tracebacks, `error:` lines, pytest,
+  jest, go test, tsc and npm failures and OpenCode's timeout note count, while
+  `0 errors`, exception handlers, numeric timeout settings and type annotations
+  do not. Exit-1 probes with no other output (`grep`, `rg`, `test`, `diff`,
+  `cmp`, `command -v`, `which`, `git diff --quiet`, including `grep -c` zero
+  counts, `/dev/null` redirects, a leading `cd` or `pwd` and pipelines) remain
+  clean. Recovery matches whole command words after a leading `cd`; beyond the
+  original five-call retry window, only a successful repeat of the same command
+  and arguments counts.
 - Changing finding severities through a policy no longer clears an independent
   quality-score threshold failure. A score below `--min-score` still fails,
   and its reason appears in the terminal, HTML, benchmark, and JSON reports.
