@@ -4,6 +4,14 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- README and onboarding docs now offer two first-run paths: a lightweight,
+  keyless quality check on a bundled skill, or an NVIDIA Build rubric evaluation
+  with eligible free prototyping access. Installation adds extras as needed,
+  and the guides separate quality results from full scanner and live-agent
+  evidence.
+
 ## 0.6.0 - 2026-10-20
 
 ### Added
@@ -62,11 +70,6 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ### Changed
 
-- README and onboarding docs now offer two first-run paths: a lightweight,
-  keyless quality check on a bundled skill, or an NVIDIA Build rubric evaluation
-  with eligible free prototyping access. Installation adds extras as needed,
-  and the guides separate quality results from full scanner and live-agent
-  evidence.
 - SkillSpector now has its own default model per provider instead of
   following the chat default, so chat-default upgrades no longer reach
   SkillSpector before it supports them. An explicit `SKILL_EVAL_LLM_MODEL`
