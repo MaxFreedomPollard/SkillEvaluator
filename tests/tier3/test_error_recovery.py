@@ -763,3 +763,39 @@ def test_opencode_passing_test_output_is_not_failure(trajectory_checker, tmp_pat
     assert result["score"] == 1.0
     assert result["passed"] is True
     assert result["failures"] == []
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        'def call_api(url: str, method: str = "GET", timeout: int = 30) -> dict:',
+        "    Args:\n        --timeout: Request timeout in seconds.",
+        "class Settings(BaseModel):\n    retries: int = 3\n    timeout: float = 30.0",
+        "@dataclass\nclass Result:\n    ok: bool\n    error: str | None = None",
+        "export interface Result {\n  ok: boolean;\n  error: string | null;\n}",
+        "def run(\n    cmd: list[str],\n    timeout: int,\n    last_error: Optional[str] = None,\n):",
+    ],
+)
+def test_displayed_annotations_without_status_are_not_failures(checker, observation):
+    result = checker([_call("cat scripts/call_api.py", observation)])
+    assert result["score"] == 1.0
+    assert result["passed"] is True
+    assert result["failures"] == []
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "timeout: invalid time interval 'abc'",
+        "error: externally-managed-environment",
+        "error: unrecognized arguments: --bogus",
+        "RuntimeError: boom",
+        "ValueError: invalid literal for int() with base 10: 'x'",
+        "requests.exceptions.Timeout: HTTPSConnectionPool(host='api.example.com', port=443)",
+        "Error: Cannot find module 'jest'",
+    ],
+)
+def test_diagnostics_without_status_still_fail(checker, observation):
+    result = checker([_call("python run.py", observation)])
+    assert result["score"] == 0.0
+    assert result["passed"] is False

@@ -8050,13 +8050,20 @@ def check_error_recovery(tool_calls, expected_script=None):
         r"\]?[ \t]*[=:]?[ \t]*(-?\d+)\]?[ \t]*\r?$",
         re.IGNORECASE | re.MULTILINE,
     )
+    # A type annotation such as `error: str | None = None` or `timeout: float = 30.0`
+    # is displayed source, not a diagnostic.
+    not_annotation = (
+        r"(?![ \t]*[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?"
+        r"(?:[ \t]*\|[ \t]*[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)*[ \t]*[=|;,)])"
+    )
     # Results without any exit status (Harbor's OpenCode trajectories keep only
     # the output) are judged by diagnostic forms, not prose such as "0 errors"
-    # or "error handling".
+    # or "error handling", or a `--timeout:` option description.
     failure_text_re = re.compile(
-        r"^\s*(?:[\w.+/-]+:\s*)*(?:error|exception)\s*:"
-        r"|\btimeout\s*:(?!\s*\d)|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
-        r"|^\s*\w*(?:Error|Exception)\s*:|traceback\s*\(most recent call last\)"
+        rf"^\s*(?:[\w.+/-]+:\s*)*(?:error|exception)\s*:{not_annotation}"
+        rf"|(?<![-\w])timeout\s*:(?!\s*\d){not_annotation}"
+        r"|^\s*(?:\w*(?:error|exception)|timeout|connectionrefused)\s*$"
+        rf"|^\s*\w*(?:Error|Exception)\s*:{not_annotation}|traceback\s*\(most recent call last\)"
         r"|\bstatus\s*=\s*(?:failed|error)\b"
         r"|\b(?:command not found|no such file(?: or directory)?|permission denied)\b"
         r"|\b(?:connection refused|connectionrefused|timed out)\b|:\s*not found\b"
