@@ -216,6 +216,30 @@ def test_discovery_records_unreadable_linked_manifest_probe(tmp_path: Path, monk
 
 
 @pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize(
+    ("skill_parent", "link_name", "target"),
+    [("skills", ".claude/skills", "../skills"), ("v2", "latest", "v2"), ("skills", "loop", ".")],
+)
+def test_catalog_ignores_links_back_into_catalog(
+    tmp_path: Path, workers: int, skill_parent: str, link_name: str, target: str
+) -> None:
+    catalog = tmp_path / "catalog"
+    _skill(catalog, f"{skill_parent}/simple")
+    linked = catalog / link_name
+    linked.parent.mkdir(parents=True, exist_ok=True)
+    linked.symlink_to(target, target_is_directory=True)
+    reports = tmp_path / "reports"
+
+    result = _validate(catalog, reports, workers)
+
+    assert result.exit_code == 0, result.output
+    summary = json.loads((reports / "catalog-summary.json").read_text(encoding="utf-8"))
+    assert summary["total"] == 1
+    assert summary["overall_passed"] is True
+    assert [entry["name"] for entry in summary["skills"]] == [f"{skill_parent}/simple"]
+
+
+@pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("include_live", [False, True])
 def test_catalog_records_linked_skills_as_failed_entries(tmp_path: Path, workers: int, include_live: bool) -> None:
     catalog = tmp_path / "catalog"

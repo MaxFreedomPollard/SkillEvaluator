@@ -50,7 +50,7 @@ def find_skills_in_directory(root_path: Path, *, problems: dict[Path, str] | Non
     """Find live skill directories containing a supported manifest.
 
     Prunes configured scan exclusions and never validates linked directories.
-    Linked targets are inspected only to report skipped skills as failures.
+    External linked targets are inspected to report skipped skills as failures.
     Stops at each skill boundary so bundled templates are not separate skills.
     Both ``SKILL.md`` and ``skill.md`` are accepted. Manifest validation stays
     with the per-skill validators, as it does for direct skill targets.
@@ -83,6 +83,7 @@ def find_skills_in_directory(root_path: Path, *, problems: dict[Path, str] | Non
     def record_walk_error(error: OSError) -> None:
         record_problem(Path(error.filename) if error.filename else root_path, f"Cannot discover skills: {error}")
 
+    resolved_root = Path(os.path.realpath(root_path))
     for dirpath, dirnames, filenames in os.walk(root_path, onerror=record_walk_error, followlinks=False):
         base = Path(dirpath)
         if any(name in filenames or name in dirnames for name in SKILL_MANIFEST_VARIANTS):
@@ -96,6 +97,9 @@ def find_skills_in_directory(root_path: Path, *, problems: dict[Path, str] | Non
                 continue
             if is_link_or_reparse(directory):
                 try:
+                    # Internal aliases are already covered through their real paths.
+                    if Path(os.path.realpath(directory)).is_relative_to(resolved_root):
+                        continue
                     has_manifest = _linked_directory_contains_skill(directory)
                 except OSError as exc:
                     record_problem(directory, f"Cannot inspect linked skill directory {directory}: {exc}")
