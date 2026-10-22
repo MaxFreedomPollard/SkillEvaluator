@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from skillevaluator.tier3.eval_core.atif_helpers import extract_tool_calls_as_dicts
 from skillevaluator.tier3.eval_core.checks import check_error_recovery
 from skillevaluator.tier3.harbor.report import _collect_fail_reasons
 from skillevaluator.tier3.harbor.templates import eval as eval_template
@@ -516,3 +517,137 @@ def test_codex_output_does_not_strip_claude_marker(checker):
     result = checker([_call("rg TODO src", _codex_output(1, "[error] tool reported failure"))])
     assert result["passed"] is False
     assert result["score"] == 0.0
+
+
+@pytest.fixture(
+    params=[
+        (extract_tool_calls_as_dicts, check_error_recovery),
+        (eval_template.extract_tool_calls_as_dicts, eval_template.check_error_recovery),
+    ],
+    ids=["host", "harbor-verifier"],
+)
+def trajectory_checker(request):
+    """Extract tool calls from an ATIF trajectory and score them with one implementation."""
+    extract, check = request.param
+
+    def run(trajectory: dict) -> dict:
+        return check(extract(trajectory))
+
+    run.extract = extract
+    return run
+
+
+def _claude_code_trajectory(*commands: tuple[str, str, int]) -> dict:
+    """Build Harbor Claude Code ATIF steps for (command, output, exit code) tuples."""
+    from harbor.agents.installed.claude_code import ClaudeCode
+
+    steps = []
+    for index, (command, output, exit_code) in enumerate(commands):
+        if exit_code:
+            content = f"Exit code {exit_code}\n{output}".rstrip()
+            block = {"type": "tool_result", "content": content, "is_error": True}
+            observation, metadata = ClaudeCode._format_tool_result(block, f"Error: {content}")
+        else:
+            block = {"type": "tool_result", "content": output, "is_error": False}
+            tool_use_result = {"stdout": output, "stderr": "", "interrupted": False, "isImage": False}
+            observation, metadata = ClaudeCode._format_tool_result(block, tool_use_result)
+        call_id = f"toolu_{index}"
+        steps.append(
+            {
+                "step_id": index + 1,
+                "source": "agent",
+                "message": "",
+                "tool_calls": [{"tool_call_id": call_id, "function_name": "Bash", "arguments": {"command": command}}],
+                "observation": {
+                    "results": [
+                        {
+                            "source_call_id": call_id,
+                            "content": observation,
+                            # Harbor stores the result's is_error flag here.
+                            "extra": {"tool_result_metadata": metadata, "tool_result_is_error": block["is_error"]},
+                        }
+                    ]
+                },
+            }
+        )
+    return {"schema_version": "ATIF-v1.7", "agent": {"name": "claude-code"}, "steps": steps}
+
+
+@pytest.mark.parametrize(
+    "command,output",
+    [
+        (
+            'python3 -m py_compile repository.py && echo OK; python3 -c "import sqlalchemy" 2>&1 | tail -1',
+            "OK\nModuleNotFoundError: No module named 'sqlalchemy'",
+        ),
+        ("python scripts/fetch.py --url https://example.com/missing", '{"error": "HTTP 404: Not Found"}'),
+        ("cat scripts/call_api.py", 'result["error"] = f"Request timed out after {timeout} seconds"'),
+        ("cat scripts/parse.py", "    Raises:\n        ValueError: If the spec is malformed."),
+        ("ls missing; ls skills", "ls: missing: No such file or directory\nreport-builder"),
+        ("cat build.log", "step 3\nexit code 1\nretrying"),
+    ],
+)
+def test_claude_code_success_flag_skips_text_check(trajectory_checker, command, output):
+    trajectory = _claude_code_trajectory((command, output, 0))
+    assert trajectory_checker.extract(trajectory)[0]["is_error"] is False
+    result = trajectory_checker(trajectory)
+    assert result["score"] == 1.0
+    assert result["passed"] is True
+    assert result["failures"] == []
+
+
+def test_claude_code_success_flag_counts_as_recovery(trajectory_checker):
+    trajectory = _claude_code_trajectory(
+        ("python scripts/build.py", "Traceback (most recent call last):\nKeyError: 'x'", 1),
+        ("python scripts/build.py --in data.csv", "lint step failed, skipped\nexit code 1\nwrote report.html", 0),
+    )
+    result = trajectory_checker(trajectory)
+    assert result["score"] == 0.9
+    assert result["passed"] is True
+    assert len(result["corrections"]) == 1
+    assert result["unrecovered_failures"] == []
+
+
+@pytest.mark.parametrize(
+    "command,output,exit_code",
+    [
+        ("pytest -q", "F.\nFAILED tests/test_a.py::test_a - assert 1 == 2\n1 failed, 1 passed", 1),
+        ("python run.py", "Traceback (most recent call last):\nKeyError: 'x'", 1),
+        ("npx tsc --noEmit", "src/a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.", 2),
+        ("python run.py", "", 1),
+    ],
+)
+def test_claude_code_error_flag_still_fails(trajectory_checker, command, output, exit_code):
+    trajectory = _claude_code_trajectory((command, output, exit_code))
+    assert trajectory_checker.extract(trajectory)[0]["is_error"] is True
+    result = trajectory_checker(trajectory)
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert len(result["unrecovered_failures"]) == 1
+
+
+@pytest.mark.parametrize(
+    "content,score",
+    [
+        ("Command timed out after 2m 0.0s", 0.0),
+        ("Permission to use Bash with command rm -rf build has been denied.", 1.0),
+    ],
+)
+def test_claude_code_error_flag_without_exit_status_uses_text(trajectory_checker, content, score):
+    trajectory = _claude_code_trajectory(("rm -rf build", "", 0))
+    result_entry = trajectory["steps"][0]["observation"]["results"][0]
+    result_entry["content"] = f"{content}\n\n[error] tool reported failure"
+    result_entry["extra"] = {"tool_result_is_error": True}
+    assert trajectory_checker.extract(trajectory)[0]["is_error"] is True
+    assert trajectory_checker(trajectory)["score"] == score
+
+
+def test_unflagged_result_keeps_text_check(trajectory_checker):
+    trajectory = _claude_code_trajectory(("python run.py", "", 0))
+    result_entry = trajectory["steps"][0]["observation"]["results"][0]
+    result_entry["content"] = "Traceback (most recent call last):\nKeyError: 'x'"
+    del result_entry["extra"]
+    assert "is_error" not in trajectory_checker.extract(trajectory)[0]
+    result = trajectory_checker(trajectory)
+    assert result["score"] == 0.0
+    assert result["passed"] is False

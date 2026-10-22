@@ -5309,13 +5309,20 @@ def check_error_recovery(
         output = re.sub(r"^\[error\] tool reported failure\r?$", "", output, flags=re.MULTILINE)
         return not output.strip()
 
+    def _exit_status(tc: dict[str, Any]) -> int | None:
+        # Harbor marks Claude Code results that exited 0 with tool_result_is_error
+        # false and adds an exit status line only to failures.
+        if tc.get("is_error") is False:
+            return 0
+        status = exit_status_re.search(str(tc.get("observation", "")))
+        return int(status.group(1)) if status else None
+
     def _is_failure(tc: dict[str, Any]) -> bool:
         obs = str(tc.get("observation", ""))
-        if status := exit_status_re.search(obs):
-            exit_code = int(status.group(1))
-            if exit_code == 1 and _is_quiet_negative_probe(tc, obs):
-                return False
-            return exit_code != 0
+        exit_code = _exit_status(tc)
+        if exit_code is not None:
+            return exit_code != 0 and not (exit_code == 1 and _is_quiet_negative_probe(tc, obs))
+        # Only results without an exit status are judged by their text.
         return failure_text_re.search(obs) is not None
 
     def _cmd_text(tc: dict[str, Any]) -> str:
@@ -5333,11 +5340,8 @@ def check_error_recovery(
         return any(kw in obs_lower for kw in skill_fault_keywords)
 
     failed = [_is_failure(call) for _, call in exec_calls]
-    succeeded: list[bool] = []
-    for i, (_, call) in enumerate(exec_calls):
-        status = exit_status_re.search(str(call.get("observation", "")))
-        # A benign negative query is not a successful retry of an earlier error.
-        succeeded.append(not failed[i] and (status is None or int(status.group(1)) == 0))
+    # A benign negative query is not a successful retry of an earlier error.
+    succeeded = [not failed[i] and _exit_status(call) in (None, 0) for i, (_, call) in enumerate(exec_calls)]
 
     corrections: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
