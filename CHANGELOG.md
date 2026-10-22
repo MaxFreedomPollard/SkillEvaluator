@@ -4,6 +4,39 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- `--quality-config PATH` on `validate`, `quality-check`, and `tier1` loads the
+  deterministic quality check's expected Markdown headings from a YAML file
+  instead of the built-in list. Each `expected_headers` entry sets a `heading`
+  and optional `alternatives`, `points` (default 5), `message`, and
+  `suggestion`; omitted message and suggestion text is generated from the
+  headings. Without the flag, the packaged `quality-default.yaml` reproduces
+  the previous Prerequisites, Limitations, and Troubleshooting checks and
+  wording, so default scores are unchanged. An invalid file (bad YAML or
+  unparseable values, unknown keys, duplicate keys or headings, non-heading
+  values) is rejected before validation starts with exit code 2 and a message
+  naming the file and field, even when `--checks` leaves out `quality`. The JSON report, Markdown report,
+  and BENCHMARK.md record which config produced the quality score as
+  `quality_config` (`packaged` or `custom`, the custom file's name, a
+  `sha256:` digest of the normalized rules, and the `--min-score` pass
+  threshold, which is kept out of the digest).
+
+### Changed
+
+- README and onboarding docs now offer two first-run paths: a lightweight,
+  keyless quality check on a bundled skill, or an NVIDIA Build rubric evaluation
+  with eligible free prototyping access. Installation adds extras as needed,
+  and the guides separate quality results from full scanner and live-agent
+  evidence.
+
+### Documentation
+
+- Give the performance dashboard its own sidebar guide, retain the previous
+  Reports & Results link, and explain matching-judge and activation limits on
+  comparisons. Clarify the independent per-skill quality threshold, Windows
+  Docker setup, and custom-backend and MCP environment controls.
+
 ### Fixed
 
 - Tier 3 error recovery now scores unrecovered command failures as zero and
@@ -20,9 +53,21 @@ All notable changes to SkillEvaluator are documented in this file.
   clean. Recovery matches whole command words after a leading `cd`; beyond the
   original five-call retry window, only a successful repeat of the same command
   and arguments counts.
+- Catalog validation now includes nested and lowercase skill manifests, skips
+  generated directories, and stops at skill boundaries to avoid validating
+  bundled templates as separate skills. External linked directories containing
+  skills and unreadable directories appear as failures without stopping other
+  skills; links back into the catalog are ignored. Linked manifests retain
+  direct-target behavior, plugin discovery errors produce findings, and reports
+  and external Tier 3 results preserve catalog-relative paths for skills with
+  the same basename.
 - Changing finding severities through a policy no longer clears an independent
   quality-score threshold failure. A score below `--min-score` still fails,
   and its reason appears in the terminal, HTML, benchmark, and JSON reports.
+- Tier 3 on Windows passes `PROGRAMFILES`, `PROGRAMW6432` and `PROGRAMDATA` to
+  Harbor, so Docker Desktop finds its `compose` plugin, and passes
+  `PYTHONUTF8` and `PYTHONIOENCODING` so Python UTF-8 mode reaches Harbor on
+  non-UTF-8 locales.
 
 ## 0.6.0 - 2026-10-20
 
