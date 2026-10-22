@@ -5398,12 +5398,20 @@ def check_error_recovery(
     def _cmd_text(tc: dict[str, Any]) -> str:
         return _command_text(tc)
 
+    def _command_words(cmd: str) -> list[str]:
+        # Skip a leading `cd <dir> &&` or `cd <dir>;` and split into whole words.
+        while prefix := re.match(r"\s*cd\s+(?:\"[^\"]*\"|'[^']*'|[^\s;&|]+)\s*(?:&&|;)", cmd):
+            cmd = cmd[prefix.end() :]
+        return re.findall(r"[^\s;&|()<>'\"`]+", cmd)
+
     def _commands_similar(cmd1: str, cmd2: str) -> bool:
-        if not cmd1 or not cmd2:
+        words1, words2 = _command_words(cmd1), _command_words(cmd2)
+        if not words1 or not words2:
             return False
-        base1 = cmd1.split(maxsplit=1)[0] if cmd1.split() else ""
-        base2 = cmd2.split(maxsplit=1)[0] if cmd2.split() else ""
-        return base1 == base2 or base1 in cmd2 or base2 in cmd1
+        # Compare whole words, so `ls` does not match `skills/...`; a program
+        # matches across paths and versions (python3 retries python).
+        program1, program2 = (re.sub(r"[\d.]+$", "", words[0].rsplit("/", 1)[-1]) for words in (words1, words2))
+        return (bool(program1) and program1 == program2) or words1[0] in words2 or words2[0] in words1
 
     def _is_skill_fault(error_obs: str) -> bool:
         obs_lower = error_obs.lower()

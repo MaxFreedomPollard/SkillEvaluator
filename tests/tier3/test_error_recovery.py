@@ -872,3 +872,43 @@ def test_quiet_probe_variants_keep_real_failures(checker, command, output, exit_
         assert result["score"] == 0.0, observation
         assert result["passed"] is False
         assert len(result["unrecovered_failures"]) == 1
+
+
+@pytest.mark.parametrize(
+    "command,retry",
+    [
+        ("python skills/report-builder/scripts/build.py --in data.csv", "ls /tmp"),
+        ("cd /app && pytest -q", "cd /app && git status --short"),
+        ("cd /app; python run.py", "cd /app; ls"),
+        ("pytest tests/test_api.py", "cat pytest.ini"),
+    ],
+)
+def test_unrelated_command_in_window_does_not_recover(checker, command, retry):
+    calls = [
+        _call(command, "Traceback (most recent call last):\nKeyError: 'x'\nexit code 1"),
+        _call(retry, _codex_output(0, "skills")),
+    ]
+    result = checker(calls)
+    assert result["score"] == 0.0
+    assert result["passed"] is False
+    assert result["corrections"] == []
+    assert [failure["failed_cmd"] for failure in result["unrecovered_failures"]] == [command]
+
+
+@pytest.mark.parametrize(
+    "command,retry",
+    [
+        ("cd /app && pytest -q", "pytest -q tests/test_api.py"),
+        ("pytest -q", "cd /app && pytest -q"),
+        ("python run.py", "python3 run.py --verbose"),
+        ("/usr/bin/python3 run.py", "python run.py"),
+        ("pytest -q", "python -m pytest -q"),
+        ("bash scripts/build.sh", "scripts/build.sh --clean"),
+    ],
+)
+def test_related_command_in_window_recovers(checker, command, retry):
+    result = checker([_call(command, "exit code 1"), _call(retry, _codex_output(0, "done"))])
+    assert result["score"] == 0.9
+    assert result["passed"] is True
+    assert len(result["corrections"]) == 1
+    assert result["unrecovered_failures"] == []

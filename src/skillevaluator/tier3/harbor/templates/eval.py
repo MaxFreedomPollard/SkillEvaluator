@@ -8203,12 +8203,20 @@ def check_error_recovery(tool_calls, expected_script=None):
     def _cmd_text(tc):
         return _command_text(tc)
 
+    def _command_words(cmd):
+        # Skip a leading `cd <dir> &&` or `cd <dir>;` and split into whole words.
+        while prefix := re.match(r"\s*cd\s+(?:\"[^\"]*\"|'[^']*'|[^\s;&|]+)\s*(?:&&|;)", cmd):
+            cmd = cmd[prefix.end() :]
+        return re.findall(r"[^\s;&|()<>'\"`]+", cmd)
+
     def _cmds_similar(c1, c2):
-        if not c1 or not c2:
+        w1, w2 = _command_words(c1), _command_words(c2)
+        if not w1 or not w2:
             return False
-        b1 = c1.split()[0] if c1.split() else ""
-        b2 = c2.split()[0] if c2.split() else ""
-        return b1 == b2 or b1 in c2 or b2 in c1
+        # Compare whole words, so `ls` does not match `skills/...`; a program
+        # matches across paths and versions (python3 retries python).
+        p1, p2 = (re.sub(r"[\d.]+$", "", words[0].rsplit("/", 1)[-1]) for words in (w1, w2))
+        return (bool(p1) and p1 == p2) or w1[0] in w2 or w2[0] in w1
 
     failed = [_is_failure(call) for _, call in exec_calls]
     # A benign negative query is not a successful retry of an earlier error.
