@@ -4,6 +4,14 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- README and onboarding docs now offer two first-run paths: a lightweight,
+  keyless quality check on a bundled skill, or an NVIDIA Build rubric evaluation
+  with eligible free prototyping access. Installation adds extras as needed,
+  and the guides separate quality results from full scanner and live-agent
+  evidence.
+
 ### Documentation
 
 - Give the performance dashboard its own sidebar guide, retain the previous
