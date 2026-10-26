@@ -869,8 +869,8 @@ class QualityScoreValidator(ValidatorBase):
             return
         metadata = frontmatter.get("metadata")
         if not isinstance(metadata, dict):
-            # The schema check reports a list, string, or scalar here; score it as
-            # absent metadata rather than indexing into it.
+            # A list, string, or scalar is invalid metadata per the schema; score it
+            # as absent metadata rather than indexing into it.
             metadata = {}
 
         top_level_fields = {
