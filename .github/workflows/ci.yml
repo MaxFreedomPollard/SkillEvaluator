@@ -68,7 +68,7 @@ jobs:
         run: python scripts/check_oss_boundary.py --root . --allowlist config/oss_boundary_allowlist.json
       - name: Lint committed BENCHMARK.md fixtures for leak patterns
         if: ${{ needs.classify-changes.outputs.docs_only != 'true' }}
-        run: python scripts/ci/check_public_benchmarks.py --require-files tests/golden --require-source-provenance
+        run: uv run python scripts/ci/check_public_benchmarks.py --require-files tests/golden --require-source-provenance
       - name: Lint
         if: ${{ needs.classify-changes.outputs.docs_only != 'true' }}
         run: uv run ruff check .
@@ -80,27 +80,22 @@ jobs:
           --cov-report=term-missing
           --cov-report=xml:coverage.xml
       - name: Set up Node.js for docs
-        if: ${{ needs.classify-changes.outputs.docs_only == 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
       - name: Validate Fern documentation
-        if: ${{ needs.classify-changes.outputs.docs_only == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
-          FERN_VERSION="$(node -p "require('./fern/fern.config.json').version")"
-          if [[ ! "$FERN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error file=fern/fern.config.json::Invalid Fern CLI version: $FERN_VERSION"
-            exit 1
-          fi
-          npm install --global "fern-api@$FERN_VERSION"
-          fern check
+          # npm ci reproduces fern/package-lock.json exactly. tests/test_ci_workflows.py
+          # asserts fern/package.json and fern/fern.config.json name the same version.
+          npm ci --prefix fern --ignore-scripts --omit=optional
+          FERN_VERSION="$(node -p "require('./fern/package.json').dependencies['fern-api']")"
+          ./fern/node_modules/.bin/fern check
           {
-            echo "### Documentation-only CI"
+            echo "### Fern documentation validation"
             echo
             echo "Validated docs and Fern configuration with Fern CLI $FERN_VERSION."
-            echo "The platform test matrix was skipped because only docs/** and fern/** changed."
           } >> "$GITHUB_STEP_SUMMARY"
 
   test-python-313:
@@ -126,7 +121,8 @@ jobs:
     name: HTML parser compatibility (Python ${{ matrix.python-version }})
     needs: classify-changes
     if: ${{ !cancelled() && needs.classify-changes.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    # These older Python patch releases have setup-python builds for Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -221,6 +217,7 @@ jobs:
             cd "$RUNNER_TEMP"
             "$venv/bin/python" -c 'import anthropic, harbor, openai, skillevaluator, skillevaluator.model_catalog, skillevaluator.model_commands'
             "$venv/bin/python" -c 'from importlib.resources import files; assert files("skillevaluator.tier3.harbor").joinpath("templates/eval.py").is_file()'
+            "$venv/bin/python" -c 'from importlib.resources import files; from skillevaluator.quality_config import load_quality_config; assert files("skillevaluator.config").joinpath("quality-default.yaml").is_file(); c=load_quality_config(); assert [h["heading"] for h in c["expected_headers"]]==["## Prerequisites","## Limitations","## Troubleshooting"], c'
             "$venv/bin/skillevaluator" --version
             "$venv/bin/skillevaluator" --help >/dev/null
             "$venv/bin/skillevaluator" models --help >/dev/null
@@ -305,6 +302,7 @@ jobs:
           tests/test_harbor_output_provenance.py
           tests/test_harbor_runner_status.py
           tests/test_harbor_runtime_skill_isolation.py
+          tests/test_publication_identity.py
           tests/test_harbor_secure_copy.py::test_checked_windows_fallback_accepts_crt_descriptor_identity
           tests/test_harbor_secure_copy.py::test_checked_windows_fallback_verifies_portable_chmod_semantics
           tests/test_harbor_secure_copy.py::test_native_windows_fallback_copies_tree_and_file

@@ -50,7 +50,8 @@ To make an override persistent, set it in `evals/config.yml` under
 `harbor.agents.<name>.model` — see [Eval Datasets](eval-datasets.mdx).
 
 <Note>
-Agent CLIs are user-supplied: SkillEvaluator never installs an agent.
+Harbor installs agent CLIs in Docker and remote task environments. Local mode
+requires an agent CLI already installed on your machine.
 Operator credentials come only from the host environment — a
 `harbor.runtime_env` entry in `evals/config.yml` that sets an operator-owned
 credential name (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
@@ -62,7 +63,7 @@ See the two credential roles in [Providers & Credentials](configuration.mdx).
 ## One NVIDIA Build key for everything
 
 When the evaluator provider is NVIDIA Build (`nv_build`) and trials run in
-`--env-mode docker` or `local`, a single `NVIDIA_API_KEY` powers the
+`--env-mode docker`, `kata`, or `local`, a single `NVIDIA_API_KEY` powers the
 evaluator and all three agents:
 
 - **OpenCode** calls NVIDIA Build directly through its `nvidia` provider
@@ -114,7 +115,7 @@ SKILLEVALUATOR_LOCAL_ALLOW_NET or set it to 1`.
 
 ### Other backends still need native credentials
 
-The bridges exist only in `docker` and `local` mode. On any other Harbor
+The bridges exist only in `docker`, `kata`, and `local` mode. On any other Harbor
 backend, each agent calls its native provider:
 
 | Agent | Requirement with `nv_build` on other backends |
@@ -131,7 +132,7 @@ Anthropic evaluator with `opencode` also does not support local mode.
 
 ## Where trials run
 
-SkillEvaluator exposes 24 environment modes: 23 Harbor-native backends,
+SkillEvaluator exposes 27 environment modes: 26 Harbor-native backends,
 including Docker, plus SkillEvaluator's own `local` host-execution mode.
 Docker is the default. The `tier3` extra installs base `harbor==0.24.0`; install
 the environment extra shown below when a managed backend needs one.
@@ -139,6 +140,7 @@ the environment extra shown below when a managed backend needs one.
 | Mode | Type | Harbor extra or system prerequisite |
 | --- | --- | --- |
 | `docker` | Harbor-native | No additional Python extra. Requires Docker Engine and Docker Compose v2 — see [Docker mode](#docker-mode). |
+| `kata` | Harbor-native | No additional Python extra. Requires a Linux host with `/dev/kvm` and a Kata Containers runtime registered with Docker — see [Kata mode](#kata-mode). |
 | `daytona` | Harbor-native | `harbor[daytona]==0.24.0` |
 | `e2b` | Harbor-native | `harbor[e2b]==0.24.0` |
 | `modal` | Harbor-native | `harbor[modal]==0.24.0` |
@@ -161,10 +163,15 @@ the environment extra shown below when a managed backend needs one.
 | `skypilot` | Harbor-native | `harbor[skypilot]==0.24.0` |
 | `hyperbrowser` | Harbor-native | `harbor[hyperbrowser]==0.24.0` |
 | `vercel` | Harbor-native | `harbor[vercel]==0.24.0` |
+| `runta` | Harbor-native | `harbor[runta]==0.24.0` |
+| `mosaic` | Harbor-native | `harbor[mosaic]==0.24.0` |
 | `local` | SkillEvaluator | Your machine, under an OS sandbox policy — see [Local mode](#local-mode). |
 
+Installed packages can add more modes, for example an organization's internal
+sandbox service. See [Custom execution backends](#custom-execution-backends).
+
 <Tip>
-SkillEvaluator documents setup for `docker` and `local`. For any other
+SkillEvaluator documents setup for `docker`, `kata`, and `local`. For any other
 backend, install the mapped Harbor extra or system CLI shown above, set the
 credentials that backend requires, and confirm readiness with
 `skillevaluator doctor --env-mode <mode>` before a full run.
@@ -177,17 +184,24 @@ authentication (`auth=wandb`), using `WANDB_API_KEY` or the netrc file that
 is rejected for both `cwsandbox` and `wandb`.
 
 Harbor 0.24 also defines `cua-cloud`, `opensandbox`, `hf-sandbox`, `podman`,
-`kata`, `runta`, `prime`, `mosaic`, and `smol`, but those backends are not
-exposed until SkillEvaluator can project the complete task bundle — skill,
-verifier, dependencies, and inputs — through a trusted image or
-backend-native provisioning path, with credentials and constructor options
-reviewed per backend. Selecting one of those names is rejected before a run
-starts.
+`prime`, and `smol`, but those backends are not exposed until SkillEvaluator
+can project the complete task bundle — skill, verifier, dependencies, and
+inputs — through a trusted image or backend-native provisioning path, with
+credentials and constructor options reviewed per backend. Selecting one of those
+names is rejected before a run starts. Prime cannot build a Dockerfile-only
+task, which is how SkillEvaluator stages most tasks, and Smol runs only a
+published `[environment].docker_image`, which SkillEvaluator rejects because it
+bypasses the evaluator-staged image. Exposing either one needs Compose-only
+staging or a trusted image-publishing step, validated live. Podman also needs a
+runtime-aware hardened Compose runner: Harbor runs Podman without Compose's
+`up --wait` readiness gate and, for some frontends, without `compose cp`, which
+SkillEvaluator's Docker isolation relies on.
 
 ### Native backend constructor options
 
 Environment kwargs are operator-only and apply only to Harbor-native
-non-Docker backends. `docker` and `local` reject any environment kwargs. For an
+non-Docker backends. `docker` and `local` reject any environment kwargs, and
+`kata` accepts only its two runtime options (see [Kata mode](#kata-mode)). For an
 eligible backend that needs non-secret constructor options in addition to host
 credentials, pass each option with the repeatable
 `--environment-kwarg KEY=VALUE` / `--ek KEY=VALUE` flag:
@@ -258,6 +272,37 @@ Harbor 0.24 Modal preflight requires `~/.modal.toml` or `MODAL_TOKEN_ID` plus
 custom config path by itself; configure one of Harbor's supported credential
 forms before launching trials.
 
+Runta authenticates with `RUNTA_TOKEN` or the configuration file named by
+`RUNTA_CONFIG` (default `~/.config/runta/config.toml`), and Harbor's preflight
+requires one of the two variables. `RUNTA_ENDPOINT` selects a non-default API
+endpoint. A relative `RUNTA_CONFIG` path is resolved against the directory you
+run SkillEvaluator from, and a configured file must exist. Runta's `mode`
+kwarg is reserved: `mode=direct` runs commands in Runta's base runtime and
+ignores the task image, while Harbor's automatic selection builds the task's
+Dockerfile or Compose definition inside the runtime.
+
+Mosaic authenticates with `MOSAIC_API_TOKEN` or the token `mos login` saves in
+`~/.config/mosaic-sandbox/config.json`; `MOSAIC_CONFIG` names a different file,
+which must exist and is resolved against the directory you run SkillEvaluator
+from when relative.
+`MOSAIC_API_URL` and `MOSAIC_RETRIES` tune the API client, the SDK's older
+`MAR_API_TOKEN`, `MAR_ENDPOINT`, and `MAR_CONFIG` names are forwarded too, and
+`MOSAIC_REGISTRY_USERNAME` and `MOSAIC_REGISTRY_PASSWORD` cover private base
+images. Mosaic's `volume`, `persist`, and `enable_ssh` kwargs are
+reserved because they let state or access outlive one isolated trial, and
+`build_args` and `build_target` are reserved because they can skip or alter
+evaluator-staged Dockerfile layers. Mosaic's `secrets` kwarg is rejected because
+it injects provider secrets into the agent's sandbox, and a Mosaic token stored
+only in `E2B_API_KEY` is rejected because that variable is never forwarded to
+Mosaic. Mosaic runs one VM per trial, so tasks with an
+`environment/docker-compose.yaml` are rejected before the run starts.
+
+Harbor builds each Mosaic task image into a snapshot named from the task and its
+build context, reuses an existing snapshot with that name in later runs, and
+never deletes snapshots. Run evaluations in a Mosaic account that only trusted
+operators can write to, and delete old `harbor-*` snapshots when you no longer
+need the staged skills and inputs they contain.
+
 Other eligible, backend-specific constructor options are forwarded after
 validation. A key that the selected backend's Harbor 0.24.0 constructor does not
 accept is rejected before the run starts; for example, Harbor 0.24 removed
@@ -284,6 +329,102 @@ embedded credential URI, or raw secret value is rejected:
 Complex values use JSON syntax in the `KEY=VALUE` argument. Reference names
 must be trimmed and bounded; they cannot contain credential-bearing URIs.
 
+## Custom execution backends
+
+A Python package can add an `--env-mode` that runs trials on infrastructure
+Harbor does not ship, without changing SkillEvaluator. The package registers
+an entry point in the `skillevaluator.env_modes` group. The entry-point name
+becomes the mode name, and its value names an `EnvironmentBackendSpec` (or a
+function that returns one):
+
+```toml
+# pyproject.toml of the backend package
+[project.entry-points."skillevaluator.env_modes"]
+acme = "skillevaluator_acme.backend:SPEC"
+```
+
+```python
+# skillevaluator_acme/backend.py
+from skillevaluator.tier3_environments import EnvironmentBackendSpec
+
+SPEC = EnvironmentBackendSpec(
+    import_path="skillevaluator_acme.environment:AcmeEnvironment",
+    environment_kwargs=frozenset({"profile", "lease_seconds"}),
+    required_environment_kwargs=("profile",),
+    host_env_vars=frozenset({"ACME_SANDBOX_URL", "ACME_SANDBOX_TOKEN"}),
+    prerequisites="skillevaluator_acme.checks:prerequisites",
+    install_hint="Install 'skillevaluator-acme' from your package index.",
+)
+```
+
+`import_path` names a Harbor `BaseEnvironment` subclass. SkillEvaluator passes
+it to `harbor run --env`, so the class receives the same evaluator-staged task
+directory, verifier, and trial paths as a Harbor-native backend.
+
+### What a backend must provide
+
+- Support the Harbor release SkillEvaluator pins (`harbor==0.24.0`), including
+  its environment constructor options.
+- Run the evaluator-staged image: build each task's `environment/Dockerfile` as
+  written, or an equivalent image with the same layers. Do not substitute a
+  generic image.
+- Preserve the task workspace: `/workspace` with the staged skills under the
+  task's `skills_dir`, task input, and the agent working directory.
+- Preserve the verifier contract: run `tests/` with the verifier environment
+  SkillEvaluator stages, and return `/logs/verifier` and `/logs/agent`
+  (including the trajectory) to the host.
+- Clean up every trial resource, including after cancellation.
+
+The acceptance test for a backend is a full SkillEvaluator Tier 3 run of a
+skill with both the baseline and with-skill conditions on that backend. The
+run must produce the expected scores, retain trajectories and verifier
+artifacts, and leave no trial resources behind. Compare the results with the
+same skill on `--env-mode docker`.
+
+### Policy SkillEvaluator applies
+
+A custom execution backend follows the same policy as the Harbor-native
+backends:
+
+- `--ek` accepts only the names in `environment_kwargs`. Names in
+  `reserved_environment_kwargs`, SkillEvaluator's runtime-policy kwargs such as
+  `network_policy` and `session_id`, and secret-bearing names or values are
+  rejected.
+- Only the upper-case variables in `host_env_vars` reach the Harbor process,
+  in addition to the usual proxy, CA bundle, and locale variables. A skill's
+  `harbor.runtime_env` cannot set them. A backend cannot forward agent or
+  provider credentials (for example `ANTHROPIC_*`, `CLAUDE_*`, `CODEX_*`,
+  `OPENAI_*`, `OPENCODE_*`, `NVIDIA_*`, `AWS_*`, `GITHUB_*`, `GH_*`, `HF_*`),
+  another backend's credentials, judge settings, or process-control variables,
+  because Harbor's stock agents read some of them and can copy them into the
+  trial sandbox. `KUBECONFIG` is allowed. The runner supplies agent credentials
+  per agent as it does for every backend.
+- Harbor runs in a private working directory, so list host variables and `--ek`
+  kwargs that hold file paths in `host_path_env_vars` and
+  `host_path_environment_kwargs`; relative values are made absolute first.
+- `skillevaluator doctor --env-mode <mode>` checks
+  `required_environment_kwargs`, then runs the optional `prerequisites`
+  function (`fn(environment_kwargs) -> list[str]`), then the environment
+  class's Harbor `preflight()`. Diagnostics are redacted like built-in ones.
+- Tasks with a `docker-compose.yaml` are rejected unless the backend sets
+  `supports_docker_compose=True`.
+- `agent_import_paths` may map an agent name to a Harbor agent class, for
+  example one that uses a CLI already installed in the backend's image.
+  Agents without an entry use Harbor's stock agent. When the evaluator
+  provider needs its own wrapper (for example `SkillEvaluatorGatewayCodex` for
+  Codex with an OpenAI-compatible gateway), the backend's class must subclass
+  that wrapper; otherwise the run stops before any trial starts.
+
+A custom execution backend cannot replace a built-in mode name, and a name
+registered by more than one installed package is refused with every package
+name until all but one is uninstalled. Listing the available modes reads
+package metadata only; the backend module is imported when its mode is
+selected. Published benchmark cards show a custom execution backend as
+`Isolated sandbox` and do not name it. Set
+`SKILLEVALUATOR_DISABLE_CUSTOM_BACKENDS=1` to ignore every installed custom
+execution backend. Backend packages run with your privileges, so install only
+ones you trust.
+
 ## Docker mode
 
 The default path needs a running Docker daemon and Docker Compose v2 —
@@ -291,6 +432,26 @@ The default path needs a running Docker daemon and Docker Compose v2 —
 own container, and both arms of the comparison are staged from the same
 environment definition — the baseline image differs only by not containing
 the skill — so the skill stays the only variable.
+
+### Windows hosts
+
+On native Windows, use Docker Desktop with Linux containers. Keep the Windows
+system variables available in the shell that runs SkillEvaluator: Harbor
+inherits `PROGRAMFILES`, `PROGRAMW6432`, and `PROGRAMDATA` so Docker Desktop
+can discover its Compose plugin.
+
+For a non-UTF-8 Windows locale, enable Python UTF-8 mode in PowerShell before
+running readiness checks or evaluations:
+
+```powershell title="Windows Docker readiness"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+skillevaluator doctor --env-mode docker
+```
+
+SkillEvaluator forwards both Python settings to Harbor when they are set;
+it does not enable them automatically. Native Windows local mode remains
+unsupported; use Docker or run local mode inside WSL2.
 
 ### Resource tuning
 
@@ -329,6 +490,64 @@ loading so the same definition cannot start with one interpolation value and
 later run with another. Put non-secret interpolation values in
 `harbor.runtime_env` in `evals/config.yml`; keep operator credentials in the
 host environment as described above.
+
+## GKE mode
+
+When running with `--env-mode gke`, SkillEvaluator enforces least-privilege pod
+identity by default unless you explicitly opt in for trusted skills via
+`SKILLEVALUATOR_GKE_ALLOW_WORKLOAD_IDENTITY=1` or `--ek allow_workload_identity=1`:
+
+- **ServiceAccount and metadata isolation**: Pods run with
+  `automountServiceAccountToken: false`, `hostNetwork: false`,
+  `GCE_METADATA_HOST=127.0.0.1:1`, and a pod-scoped egress `NetworkPolicy`
+  (`skillevaluator-block-gce-metadata`) that blocks HTTP egress to
+  `169.254.169.254/32` and `169.254.169.252/32` while preserving UDP/TCP port 53 DNS.
+  Kubernetes ServiceAccounts annotated with `iam.gke.io/gcp-service-account` or
+  `iam.gke.io/return-principal-id-as-email=true` are rejected.
+- **Trusted init and companion metadata probes**: Single-container evaluation
+  pods include a trusted init container (`skillevaluator-metadata-probe-init`)
+  that verifies metadata endpoints are unreachable *before* the `main` task
+  container starts, plus a companion container (`skillevaluator-metadata-probe`)
+  that re-verifies isolation before task upload. Set
+  `SKILLEVALUATOR_GKE_METADATA_PROBE_IMAGE` when your cluster requires pulling
+  the probe image (`python:3.12-slim` by default) from a private Artifact Registry mirror.
+- **GKE Autopilot ephemeral storage**: On GKE Autopilot (auto-detected via node
+  inspection or `gcloud`, or set explicitly with `SKILLEVALUATOR_GKE_AUTOPILOT`
+  / `--ek autopilot=<bool>`), general-purpose pods have a `10Gi` (`10240Mi`)
+  cumulative ephemeral-storage ceiling. When a non-GPU/TPU `main` container
+  requests `10Gi`, SkillEvaluator caps `main` to `10176Mi` so `main` (`10176Mi`) +
+  `skillevaluator-metadata-probe` (`64Mi`) equals `10240Mi`. Standard GKE
+  clusters, GPU/TPU pods, and explicit storage requests above `10Gi` are not
+  lowered.
+
+## Kata mode
+
+`--env-mode kata` uses the same hardened Docker Compose backend as Docker mode,
+including its credential handoff and container containment, but Harbor adds a
+final Compose overlay that runs every task service under a Kata Containers
+runtime, so agent execution and verification happen inside KVM microVMs instead
+of on the host kernel. It needs a Linux host with `/dev/kvm`, Docker Compose v2,
+and a Kata runtime handler registered with Docker (for example with Kata's
+`kata-manager.sh`). `skillevaluator doctor --env-mode kata` checks all three,
+including that Docker registers the selected handler.
+
+Two environment kwargs are accepted:
+
+| Kwarg | Default | Rule |
+| --- | --- | --- |
+| `kata_runtime` | `kata` | A registered Docker runtime handler whose name contains `kata`, such as `kata-clh` or `kata-qemu`. Other handlers, such as `runc`, are rejected. |
+| `kata_dns` | `1.1.1.1,8.8.8.8` | At least one IP address, written to each microVM's `resolv.conf`, as a list or comma-separated string. The default replaces the resolvers Docker's embedded DNS would forward to, so set your network's resolvers when public DNS is blocked or when a gateway, judge, or package endpoint uses an internal hostname. |
+
+Harbor's Kata backend has limits that SkillEvaluator keeps:
+
+- Image builds are not VM-isolated. Dockerfile `RUN` steps execute on the
+  host's BuildKit builder; the microVM boundary covers the agent and verifier.
+- Non-public network policies are rejected before start, because Kata VMs
+  cannot join the egress-control sidecar's network namespace. Generated tasks
+  use public networking.
+- Compose service-name DNS does not work inside the microVM, so tasks whose
+  Compose model declares services other than `main`, such as a database
+  sidecar, are rejected before the run starts.
 
 ## Local mode
 

@@ -6,12 +6,124 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ### Added
 
+- `--quality-config PATH` on `validate`, `quality-check`, and `tier1` loads the
+  deterministic quality check's expected Markdown headings from a YAML file
+  instead of the built-in list. Each `expected_headers` entry sets a `heading`
+  and optional `alternatives`, `points` (default 5), `message`, and
+  `suggestion`; omitted message and suggestion text is generated from the
+  headings. Without the flag, the packaged `quality-default.yaml` reproduces
+  the previous Prerequisites, Limitations, and Troubleshooting checks and
+  wording, so default scores are unchanged. An invalid file (bad YAML or
+  unparseable values, unknown keys, duplicate keys or headings, non-heading
+  values) is rejected before validation starts with exit code 2 and a message
+  naming the file and field, even when `--checks` leaves out `quality`. The JSON report, Markdown report,
+  and BENCHMARK.md record which config produced the quality score as
+  `quality_config` (`packaged` or `custom`, the custom file's name, a
+  `sha256:` digest of the normalized rules, and the `--min-score` pass
+  threshold, which is kept out of the digest).
+
+### Changed
+
+- README and onboarding docs now offer two first-run paths: a lightweight,
+  keyless quality check on a bundled skill, or an NVIDIA Build rubric evaluation
+  with eligible free prototyping access. Installation adds extras as needed,
+  and the guides separate quality results from full scanner and live-agent
+  evidence.
+
+### Documentation
+
+- Give the performance dashboard its own sidebar guide, retain the previous
+  Reports & Results link, and explain matching-judge and activation limits on
+  comparisons. Clarify the independent per-skill quality threshold, Windows
+  Docker setup, and custom-backend and MCP environment controls.
+
+### Fixed
+
+- Tier 3 error recovery now scores unrecovered command failures as zero and
+  includes them in fault counts and failure verdicts/report reasons. Host and
+  bundled verifier detection agree and use a result's execution status when it
+  has one: a Codex exit code, a whole `exit code N` line, or Harbor marking a
+  Claude Code result as successful. Only results without a status, such as
+  OpenCode's, are judged by their text: tracebacks, `error:` lines, pytest,
+  jest, go test, tsc and npm failures and OpenCode's timeout note count, while
+  `0 errors`, exception handlers, numeric timeout settings and type annotations
+  do not. Exit-1 probes with no other output (`grep`, `rg`, `test`, `diff`,
+  `cmp`, `command -v`, `which`, `git diff --quiet`, including `grep -c` zero
+  counts, `/dev/null` redirects, a leading `cd` or `pwd` and pipelines) remain
+  clean. Recovery matches whole command words after a leading `cd`; beyond the
+  original five-call retry window, only a successful repeat of the same command
+  and arguments counts.
+- Catalog validation now includes nested and lowercase skill manifests, skips
+  generated directories, and stops at skill boundaries to avoid validating
+  bundled templates as separate skills. External linked directories containing
+  skills and unreadable directories appear as failures without stopping other
+  skills; links back into the catalog are ignored. Linked manifests retain
+  direct-target behavior, plugin discovery errors produce findings, and reports
+  and external Tier 3 results preserve catalog-relative paths for skills with
+  the same basename.
+- Changing finding severities through a policy no longer clears an independent
+  quality-score threshold failure. A score below `--min-score` still fails,
+  and its reason appears in the terminal, HTML, benchmark, and JSON reports.
+- Tier 3 on Windows passes `PROGRAMFILES`, `PROGRAMW6432` and `PROGRAMDATA` to
+  Harbor, so Docker Desktop finds its `compose` plugin, and passes
+  `PYTHONUTF8` and `PYTHONIOENCODING` so Python UTF-8 mode reaches Harbor on
+  non-UTF-8 locales.
+
+## 0.6.0 - 2026-10-20
+
+### Added
+
+- Custom execution backends. An installed package can add an `--env-mode`
+  through the `skillevaluator.env_modes` entry-point group, naming an
+  `EnvironmentBackendSpec` with a Harbor environment class plus the `--ek`
+  kwargs, host variables, prerequisite hook, and optional agent wrappers that
+  backend accepts. Custom execution backends follow the same kwarg and
+  `runtime_env` policy as Harbor-native backends, may not forward agent,
+  provider, or other backends' credentials, cannot replace a built-in mode or
+  share a name with another installed package, are not named on published
+  benchmark cards, and can be turned off with
+  `SKILLEVALUATOR_DISABLE_CUSTOM_BACKENDS=1`.
+- Optional `skillevaluator dashboard` tables for comparing saved Tier 3 reports
+  and retained runs across skills, models, harnesses, recorded harness
+  features, and skill conditions. Paired with/without differences cover score,
+  pass@k, tokens, and agent execution time, plus USD cost when retained runs
+  record it; the performance table also shows per-trial means alongside
+  totals. Comparisons require matching complete trial coverage (repeated
+  attempts pair by case, as in the HTML report) and name the reason when a
+  pair is not comparable. Inputs are read once and reused between
+  interactions (**Reload reports** re-reads them); browser uploads are limited
+  to 16 MB. Install it with the `dashboard` extra.
+- Tier 3 support for Harbor GKE execution mode (`--env-mode gke`) and `--ek`
+  argument forwarding. API keys, bearer tokens, and passwords passed in `--ek`
+  keys or values are rejected to keep credentials out of process listings, while
+  configuration such as rate limits and token counts is preserved. Cluster
+  infrastructure settings in skill configs are rejected to enforce security
+  boundaries in favor of host environment variables and CLI flags.
+- Claude Code live agent routing for Google Cloud Vertex AI
+  (`CLAUDE_CODE_USE_VERTEX=1`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`),
+  with redirect-blocking preflight probes, case-insensitive model alias
+  resolution, and explicit trusted-skill opt-in (`SKILLEVALUATOR_GKE_ALLOW_WORKLOAD_IDENTITY=1`
+  or `--ek allow_workload_identity=true`) when using single-pod GKE Workload Identity.
+- Fail-closed validation for skill-authored MCP server configurations
+  (`evals/environment/mcp_servers.toml` and `mcp_servers.json`) that blocks
+  operator/provider credential references and literal secrets, while allowing
+  operator-approved MCP endpoints and non-LLM secrets via
+  `SKILLEVALUATOR_ALLOWED_MCP_HOSTS` and `SKILLEVALUATOR_ALLOWED_MCP_SECRETS`.
 - The HTML report's Tier 1 card now shows the SkillSpector version that ran
   the security scan (for example `SkillSpector v2.12.0`), and the embedded
   report JSON records it as `skillspector_versions`. Findings depend on the
   scanner release, so reviewers can tell which SkillSpector produced them
   without rerunning the scan. The version is shown even when the report omits
   its timestamp.
+- `--env-mode kata` runs Tier 3 trials through the hardened Docker backend with
+  every task service in a Kata Containers microVM. It requires a Linux host with
+  `/dev/kvm` and a Kata runtime registered with Docker, and accepts only the
+  `kata_runtime` and `kata_dns` environment kwargs. Image builds still run on
+  the host, and tasks with Compose sidecars are rejected.
+- `--env-mode runta` and `--env-mode mosaic` run Tier 3 trials on Harbor's Runta
+  and Mosaic backends. Runta's `mode` and Mosaic's `volume`, `persist`,
+  `enable_ssh`, `build_args`, and `build_target` kwargs are reserved because they
+  bypass the task image or let state and access outlive one isolated trial.
 
 ### Changed
 
@@ -46,7 +158,9 @@ All notable changes to SkillEvaluator are documented in this file.
 - `run_config.json` records the judge reasoning effort, and each standard
   judge's details record `judge_model_used`, `judge_reasoning_effort` and
   `judge_fallback_used`. Skill lift leaves out a case whose two conditions were
-  judged by different models and counts it in `judge_mixed_cases`.
+  judged by different models and counts it in `judge_mixed_cases`. Dashboard
+  score differences preserve this matching-judge lift, including unavailable
+  comparisons.
 - Removed the unused `CONTENT_DEDUP_LLM_*` constants and `LLM_VERIFY_MODEL`; an
   LLM client built from explicit credentials uses the provider default model.
 - Tier 3 pins the agent CLIs Harbor installs: Codex 0.161.0 and Claude Code
@@ -82,9 +196,87 @@ All notable changes to SkillEvaluator are documented in this file.
   only for the Codex process. Skills whose scripts, tasks, or stdio MCP servers
   need these tools must install them through `scripts/apt-packages.txt` or a
   custom `evals/environment/Dockerfile`.
+- Exposed `kata`, `runta`, and `mosaic` as the 24th, 25th, and 26th Harbor 0.24
+  backends alongside local mode. `cua-cloud`, `opensandbox`, `hf-sandbox`,
+  `podman`, `prime`, and `smol` remain disabled.
+- The public benchmark gate (`scripts/ci/check_public_benchmarks.py`) now
+  requires a `PASS` card to record its `Source digest` and `Tier 3 run ID`.
+  `PASS` cards rendered by earlier releases fail the scan until they are
+  regenerated; earlier `FAIL`, `NEUTRAL`, and `INCOMPLETE` cards without those
+  lines are still accepted, and the lines are validated whenever present.
+- Report output must be outside the publication target. An explicit
+  `--output-dir` inside the evaluated skill is now rejected; use an external
+  directory. A default in-target `reports/` location relocates to an
+  authenticated sibling `<skill>-reports` (or `<catalog>-reports`), refuses
+  unowned collisions, and is excluded from Tier 3 runtime staging. Report roots
+  inside the target repository or an included-skill root are excluded from
+  linked or full-repository context only after they are reserved or
+  authenticated as generated output, so an authored subtree is never silently
+  omitted.
+- A custom Tier 3 `--results-dir` inside the evaluated skill is now rejected;
+  use the canonical `evals/results` path or an external results root.
+- `validate --block-on-agent-eval` now passes the exit gate only for a completed
+  Tier 3 `PASS` verdict with complete attempt coverage. `NEUTRAL` and `FAIL`
+  verdicts exit 1; previously any completed, scored run passed.
 
 ### Fixed
 
+- Tier 3 reports preserve judge-model exclusions when calculating dimension and
+  overall lift. Native multi-step results also retain the judge provenance needed
+  for those comparisons, so fallback judges cannot turn a regression into an
+  apparent improvement. Judge-free cases retain valid lift, bounded report loads
+  use the collector's recorded comparisons, and FINAL-strategy trials use only
+  the final step's judges. The CLI displays unavailable comparisons as `n/a`.
+- The LLM judge treats a schema option reported as `unavailable` as a schema
+  rejection and retries without it, so OpenAI-compatible endpoints such as
+  DeepSeek, which answer `response_format: json_schema` with HTTP 400 and
+  "This response_format type is unavailable now", can score Tier 3 instead
+  of failing every judge call (fixes #207).
+- Tier 3 reports an inconclusive result when every observed positive with-skill
+  trial has zero activation, and omits skill-lift comparisons for that agent.
+  Activation counts are reported separately; negative controls and missing
+  evidence do not imply that the skill was never loaded. The skill-execution
+  score is zero when positive activation fails, so unrelated successful checks
+  cannot inflate it to 0.5 (fixes #208). Benchmark cards and dashboard comparisons
+  preserve this eligibility rule, and multi-agent HTML labels explain why lift
+  is unavailable. Mixed-agent reports retain advice from the best eligible
+  agent without attributing never-activated trials to skill quality.
+- Tier 3 now uses one versioned, equal-weight five-dimension overall-score
+  policy across Harbor rewards, pass@k, Skill Lift, reports, comparisons, and
+  best-agent selection. Previously, some paths averaged all six evaluators
+  directly while reports averaged five dimensions, which gave Effectiveness
+  two votes and could reverse the reported lift direction. Current artifacts
+  persist `skill-evaluator-dimension-mean-v1`; legacy and partial artifacts
+  retain their historical semantics. Conditions keep their own recorded metric
+  sets; overall lift and best-agent rankings are omitted across different
+  standard metric sets while individual scores are preserved, and
+  `tier3 compare` refuses standard agents with different policies or metric
+  sets. Custom-only agents keep their grader's own overall and are ranked and
+  compared against standard agents
+  (Relates to [#61](https://github.com/NVIDIA/SkillEvaluator/issues/61)).
+- Preserve explicit Claude and OpenCode read failure metadata in reconstructed
+  ATIF trajectories. Failed isolated SKILL.md reads and failed native Skill
+  calls lose credit; compound shell failures and shell reads whose path may
+  expand to several files (braces, globs, `$` or backticks) remain ambiguous
+  and retain prior credit in host and verifier grading. Unattributed errors do
+  not cancel successful reads, and shell reads count dash-prefixed filenames
+  after `--`.
+- Tier 1 pyproject dependency audits now inspect static target declarations
+  rather than the evaluator environment. Exact direct pins (including optional
+  groups) are queried without installation or build-script execution;
+  unresolved declarations and invalid scanner evidence are incomplete.
+- Tier 1 PII scanning now includes `.mdc` rules and workflows.
+- Tier 3 negative-case accuracy excludes inapplicable skill identification and
+  records its scoring policy. Reports separately expose measured token and
+  agent execution-time differences with complete matching-arm coverage, while
+  efficiency continues to measure routing and productive tool use.
+- Derive accuracy scores from complete criterion verdicts in both judge
+  runtimes (passing applicable criteria divided by applicable criteria), so an
+  inconsistent model-supplied total cannot distort Skill Lift. Correct the
+  Harbor prompt example to score five passing criteria as 1.0.
+- Include schema-valid ATIF message content parts in final answers, conversation
+  summaries, and judge evidence references in the host and Harbor verifier.
+  Image and audio parts use markers without exposing their source paths.
 - Preserve scored Harbor trials when agent answers mention authentication errors
   and per-step token usage is present but aggregate ATIF token metrics are absent
   or zero. Explicit runtime exceptions and error events still invalidate trials.
@@ -116,16 +308,94 @@ All notable changes to SkillEvaluator are documented in this file.
 - External scanners no longer crash the scan when they print bytes that the
   selected text codec cannot decode (for example a Windows traceback with a
   CJK path). Those bytes are replaced, so the captured output is never `None`,
-  and valid output keeps its codec and line endings.
+  and valid output keeps the selected codec and universal-newline handling.
 - The Tier 1 LLM rubric gives reasoning models (DeepSeek R and V4, OpenAI o1,
   o3, o4 and GPT-5 families, and models named "reasoning") a 32,768-token
-  budget instead of the default 16,384, so their hidden reasoning no longer truncates the
-  rubric JSON. The budget follows the model each request resolves to, is
-  capped at 16,384 on the Anthropic provider, and an explicit `max_tokens`
-  still wins.
+  budget instead of the default 16,384, giving hidden reasoning more room
+  before the rubric JSON is emitted. The budget follows the model each request
+  resolves to, is capped at 16,384 on the Anthropic provider, and an explicit `max_tokens`
+  overrides this default, subject to provider and model limits.
 - `doctor --env-mode docker` and Tier 3 runs on Windows now find the Harbor
   CLI installed next to the active interpreter as `harbor.exe` or
   `harbor.cmd`, instead of reporting "harbor CLI not found".
+- `BENCHMARK.md` publication verdicts now require completed Tier 1 and Tier 2
+  execution evidence by default (Tier 1 must cover every default check that
+  applies to the content type, so a run narrowed with `--checks` cannot
+  certify publication), conservatively resolve conflicting peer
+  policy and Tier 3 result metadata, bind every tier and policy claim to one
+  versioned source-tree digest, preserve the Tier 3 run ID, persist an explicit
+  publication status in JSON and HTML, and reject
+  publication `PASS` cards whose decision evidence is missing, incomplete,
+  linked, or hidden in raw HTML. Tier 3 evidence now cross-checks complete
+  per-condition attempt and error records, and the public-card gate rejects
+  ambiguous structural headings, browser-rendered decision-text aliases, and
+  literal or entity-encoded Unicode control/format characters. The source
+  identity is read without following links before and after each producer,
+  follows the host filesystem's case aliases, and records a bounded
+  source-change marker. Tier 3 runs that stage repository context, external
+  reference or workspace skills, or task inputs with `.git`, `.venv`,
+  `__pycache__`, or `node_modules` entries remain runnable but cannot certify
+  publication, and neither can a target whose authored paths below the root
+  use names that Tier 1 skips (such as `references/results/`).
+- Clean and not-applicable License, Code Risk, Secrets, and Dependency Audit
+  runs now record structured execution evidence, so legitimate built-in Tier 1
+  results can satisfy publication without relying on findings or errors.
+- Skip reasons are bounded, control-free, and escaped in reports and in the
+  terminal, so oversized metadata, Rich markup, or terminal escape sequences
+  cannot corrupt them. Reports show one line; the pipeline view keeps the
+  reason's line breaks.
+- SkillSpector issue paths with NUL bytes or lone surrogates now make the
+  security scan incomplete instead of being accepted.
+- The public benchmark gate rejects `PASS` cards with placeholder identities,
+  malformed or future evaluation dates, a missing Tier 3 run ID, hostile
+  benchmark-policy metadata, or environment-label substitutions in required
+  proof fields.
+- Hardened Tier 3 HTML and Markdown reporting against recursive or malformed
+  display metadata, Markdown structure injection, and inline-JavaScript
+  injection through untrusted agent or skill names.
+
+### Security
+
+- The docs-publishing workflow, the only one that passes a secret to a step,
+  now pins `actions/checkout` to a commit SHA, declares
+  `permissions: contents: read`, and sets `persist-credentials: false`.
+  `dco.yml` no longer persists checkout credentials either.
+- Docs are now published with the same Fern CLI version they are validated
+  with. Both workflows install the CLI from `fern/package.json` and its
+  committed lockfile; a test checks that the pin matches `fern/fern.config.json`.
+- Workflow hardening guards now glob `.github/workflows/` instead of a
+  hardcoded two-file list, so every workflow — including any added later — must
+  pin each action to a commit, avoid persisting checkout credentials, and
+  declare a `permissions:` block. The guards also cover job-level
+  `permissions:` overrides and job-level reusable-workflow `uses:` references,
+  neither of which the step-level checks reached.
+- The Fern CLI is now installed from a committed lockfile, `fern/package-lock.json`,
+  with `npm ci --prefix fern --ignore-scripts --omit=optional`, and both workflows
+  invoke `./fern/node_modules/.bin/fern` rather than a binary on `PATH`. Previously
+  `publish-docs.yml` ran `npm install`, which re-resolves every transitive
+  dependency from semver ranges on each run: pinning `fern-api`'s own version
+  pinned nothing beneath it. `@scarf/scarf` — reached through `fern-api`'s
+  optional dependency on `@boundaryml/baml` — declares a `postinstall` script.
+  The install step did not receive `FERN_TOKEN`, but its resulting CLI was later
+  run in the token-bearing publish step. The lockfile pins every package to an
+  exact version and integrity hash, `--ignore-scripts` stops lifecycle code
+  running, and `--omit=optional` (which npm honours for this local install, but
+  silently ignores for a `--global` one) leaves `fern-api` alone in the tree.
+  Guards now permit only the reviewed lockfile install command in workflows,
+  check the Fern manifest and lockfile dependency inputs, and require
+  `fern/package.json`, `fern/package-lock.json`, and `fern/fern.config.json` to
+  name the same CLI version. Fern dependency and config changes run the full
+  CI lane, including dependency review, while `fern check` runs in both lanes.
+  The developer-facing install instructions
+  (`docs/README.md`, `docs/AGENTS.md`, `docs/developer-guide.mdx`) use the same
+  lockfile install, so a contributor or agent following them gets the tree CI runs.
+- The action-pinning guard now accepts a same-repo composite action or
+  reusable workflow (`uses: ./...`) without requiring a commit SHA, since
+  GitHub always resolves a local reference from the caller's own commit and
+  nothing about it can float. A local reference that escapes the repository
+  (e.g. `./../outside`) or carries an `@ref` (a syntax local references don't
+  have) is still rejected, and a `docker://` reference is unaffected by the
+  exemption.
 
 ## 0.5.0 - 2026-10-06
 

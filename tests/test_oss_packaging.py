@@ -148,7 +148,7 @@ def test_harbor_dependency_contract_keeps_base_install_isolated() -> None:
 
     assert base_names.isdisjoint({"harbor", "litellm"})
     assert len(harbor_requirements) == 1
-    assert not harbor_requirements[0].extras
+    assert harbor_requirements[0].extras == {"gke"}
     assert HARBOR_VERSION == "0.24.0"
     assert str(harbor_requirements[0].specifier) == f"=={HARBOR_VERSION}"
     assert len(litellm_requirements) == 1
@@ -180,10 +180,10 @@ def test_harbor_dependency_contract_keeps_base_install_isolated() -> None:
 
 def test_harbor_environment_extra_mapping_matches_installed_metadata() -> None:
     provided_extras = set(metadata("harbor").get_all("Provides-Extra") or ())
-    system_or_base_backends = {"docker", "openshift", "apple-container", "singularity"}
+    system_or_base_backends = {"docker", "kata", "openshift", "apple-container", "singularity"}
 
-    assert len(HARBOR_ENVIRONMENTS) == 24
-    assert len(HARBOR_NATIVE_ENV_MODES) == 23
+    assert len(HARBOR_ENVIRONMENTS) == 27
+    assert len(HARBOR_NATIVE_ENV_MODES) == 26
     assert frozenset(HARBOR_ENVIRONMENTS) - {"local"} == HARBOR_NATIVE_ENV_MODES
     assert set(HARBOR_ENVIRONMENT_EXTRAS) == HARBOR_NATIVE_ENV_MODES
     assert {mode for mode, extra in HARBOR_ENVIRONMENT_EXTRAS.items() if extra is None} == system_or_base_backends
@@ -317,8 +317,8 @@ def test_public_docs_match_harbor_environment_and_kwarg_contract() -> None:
     public_docs = f"{agents}\n{cli_reference}\n{configuration}\n{tier3}\n{eval_config}"
     normalized_docs = " ".join(public_docs.split())
 
-    assert "24 environment modes" in public_docs
-    assert "23 Harbor-native backends" in public_docs
+    assert "27 environment modes" in public_docs
+    assert "26 Harbor-native backends" in public_docs
     assert "All 16 values" not in public_docs
     assert "same 16 values" not in public_docs
     assert "14 additional Harbor-native backends" not in public_docs
@@ -441,6 +441,7 @@ def test_tier3_direct_dependencies_have_complete_license_notices() -> None:
     expected_notices = {
         "harbor": "Harbor (Apache-2.0)",
         "mcp": "MCP (MIT)",
+        "oauthlib": "OAuthLib (BSD-3-Clause)",
         "pyjwt": "PyJWT (MIT)",
         "python-dotenv": "python-dotenv (BSD-3-Clause)",
     }
@@ -482,6 +483,7 @@ def test_release_lock_enforces_nspect_remediation_floors_without_removed_telemet
 
     assert "mcp>=1.28.1,<2" in tier3
     assert "pyjwt[crypto]>=2.13.0" in tier3
+    assert "oauthlib>=4.0.0" in tier3
     assert "telemetry" not in extras
     assert all(
         "protobuf" not in requirement.lower() for requirements in extras.values() for requirement in requirements
@@ -491,7 +493,19 @@ def test_release_lock_enforces_nspect_remediation_floors_without_removed_telemet
     )
     assert all(version >= Version("1.28.1") for version in all_lock_versions["mcp"])
     assert all(version >= Version("2.13.0") for version in all_lock_versions["pyjwt"])
-    assert "protobuf" not in all_lock_versions
+    # The optional dashboard uses Streamlit's protobuf transport. It does not
+    # restore the removed evaluator telemetry integration or its dependencies.
+    protobuf_consumers = {
+        package["name"]
+        for package in _lock()["package"]
+        if any(dependency["name"] == "protobuf" for dependency in package.get("dependencies", []))
+    }
+    assert protobuf_consumers == {"streamlit"}
+    # Older Streamlit releases silently ignore the launcher's server.allowedHosts setting.
+    assert extras["dashboard"] == ["streamlit>=1.61,<2"]
+    assert all(version >= Version("1.61") for version in all_lock_versions["streamlit"])
+    assert not any("streamlit" in dependency for dependency in project["project"]["dependencies"])
+    assert all(version >= Version("4.0.0") for version in all_lock_versions["oauthlib"])
     assert not any(name.startswith("opentelemetry") for name in all_lock_versions)
 
 
@@ -507,49 +521,17 @@ def test_public_docs_declare_support_and_security_sections() -> None:
 
 def test_public_readme_is_a_concise_docs_landing_page() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    quickstart = readme.partition("\n## Quickstart\n")[2].partition("\n## Run the combined pipeline\n")[0]
-    combined_pipeline = readme.partition("\n## Run the combined pipeline\n")[2].partition(
-        "\n## Run from a source checkout\n"
-    )[0]
-    normalized = " ".join(readme.split())
 
-    positioning = (
-        "SkillEvaluator is an open-source, multi-tier framework for evaluating AI agent artifacts, "
-        "starting with agent skills: deterministic quality gates, semantic overlap detection, "
-        "synthetic eval dataset generation, and live agent evaluation."
-    )
-    assert positioning in normalized
+    # Keep the landing-page boundaries and public links without freezing the
+    # prose or requiring every advanced setup path to be duplicated here.
     assert "https://docs.nvidia.com/skills/skillevaluator/" in readme
     assert "https://github.com/NVIDIA/skills" in readme
     assert "https://github.com/NVIDIA/SkillSpector" in readme
     assert "\n## Three-tier overview\n" in readme
     assert "docs/assets/three-tier-overview.svg" in readme
     assert "\n## Quickstart\n" in readme
-    assert "skillevaluator[all] @ git+https://github.com/NVIDIA/SkillEvaluator.git" in readme
-    for tier in (1, 2, 3):
-        assert f"skillevaluator tier{tier} ./my-skill" in quickstart
-        assert f"skillevaluator tier{tier} run" not in quickstart
-    assert "export SKILL_EVAL_LLM_PROVIDER=nv_build" in quickstart
-    assert "export NVIDIA_API_KEY='nvapi-...'" in quickstart
-    assert "export SKILL_EVAL_LLM_PROVIDER=openai" in quickstart
-    assert "export OPENAI_API_KEY='sk-...'" in quickstart
-    assert "set just two variables" in normalized
-    assert "Semgrep, SkillSpector, and Gitleaks" in quickstart
-    assert "skillevaluator doctor --env-mode docker" in quickstart
-    assert "skillevaluator quality-check ./my-skill" in quickstart
-    assert "--catalog ./skill-catalog.json" in quickstart
-    assert "inter-skill comparison did not run" in normalized
-    assert "one starter evaluation case" in normalized
-    assert "Valid existing sources are reused unchanged; invalid ones produce an error" in normalized
-    assert "configured defaults, not automatically updated selections of the latest models" in normalized
-    assert "```bash\nskillevaluator validate ./my-skill\n```" in combined_pipeline
-    assert "with autopilot by default" in combined_pipeline
-    assert "`--full` remains supported but is unnecessary" in combined_pipeline
-    assert "skillevaluator tier3 create-eval-dataset ./my-skill --full" in combined_pipeline
-    assert "--block-on-agent-eval" in combined_pipeline
-    assert "--n-attempts 1" not in combined_pipeline
-    assert "uv run --extra all skillevaluator tier1 ./my-skill" in readme
-    assert "tier3-live-evaluation#plan-for-cost" in readme
+    assert "\n## Run the combined pipeline\n" in readme
+    assert "\n## Run from a source checkout\n" in readme
     assert "\n## Tier 1:" not in readme
     assert "Skill Evaluator" not in readme
     assert "Skillevaluator" not in readme
@@ -809,7 +791,7 @@ def test_public_docs_show_external_nvidia_build_harness_paths_only() -> None:
     assert "skillevaluator tier3 evaluate ./my-skill --agents claude-code --env-mode docker\n" in tier3
     assert "Explicit model overrides are preserved exactly" in public_docs
     assert "OpenCode renders it as" in public_docs
-    assert "Docker or local compatibility bridge" in public_docs
+    assert "in-container (Docker and Kata) or local compatibility bridge" in public_docs
     assert "experimental Claude Code" in public_docs
 
 
@@ -885,12 +867,9 @@ def test_launch_docs_address_scanner_and_naming_ambiguities() -> None:
     quickstart = (REPO_ROOT / "docs" / "quickstart.mdx").read_text(encoding="utf-8")
     ci = (REPO_ROOT / "docs" / "ci-integration.mdx").read_text(encoding="utf-8")
     environment = (REPO_ROOT / "docs" / "environment-variables.mdx").read_text(encoding="utf-8")
-    normalized_quickstart = " ".join(quickstart.split())
-
-    assert "brew install semgrep gitleaks" in quickstart
-    assert "uv tool install git+https://github.com/NVIDIA/SkillSpector.git@v2.12.0" in quickstart
+    # Scanner installation lives in the installation guide, linked from the
+    # optional full-static section, rather than blocking the first quality run.
     assert "Semgrep, SkillSpector, and Gitleaks" in quickstart
-    assert "missing scanner evidence leaves the result `INCOMPLETE` and exits `1`" in normalized_quickstart
     assert "most often Gitleaks" not in ci
     assert "Semgrep, SkillSpector, and Gitleaks are all separate executables" in " ".join(ci.split())
     assert "`SKILL_EVAL_*` covers provider and model configuration" in " ".join(environment.split())

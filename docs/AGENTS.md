@@ -21,6 +21,7 @@ folder holds MDX pages published to <https://docs.nvidia.com/skills/skillevaluat
 - `agents-and-sandboxes.mdx` — agents, environment backends, local mode, readiness
 - `custom-graders.mdx` — bring-your-own graders and native Harbor tasks
 - `reports.mdx` — report formats, scores, and the results-on-disk contract
+- `performance-dashboard.mdx` — compare saved Tier 3 scores and resource use
 - `benchmark-rollout.mdx` — regenerating and promoting `BENCHMARK.md` cards
 - `ci-integration.mdx` — exit codes, GitHub Actions recipe, progressive adoption
 - `cli-reference.mdx` — every command and flag
@@ -75,11 +76,12 @@ Navigation order, page titles, and slugs are defined in
 
 ## Verify before committing
 
-Requires **Node.js 22+** and the Fern CLI (`npm install -g fern-api`).
+Requires **Node.js 22+**. Install the pinned CLI from the committed lockfile with
+`npm ci --prefix fern --ignore-scripts --omit=optional`.
 
 ```bash
-fern check       # validate docs.yml config and all links — must pass
-fern docs dev    # optional live preview at http://localhost:3000
+./fern/node_modules/.bin/fern check       # validate docs.yml config and all links — must pass
+./fern/node_modules/.bin/fern docs dev    # optional live preview at http://localhost:3000
 ```
 
 `fern check` must pass; it is the same gate the site build relies on. Publishing

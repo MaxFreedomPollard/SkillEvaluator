@@ -173,6 +173,36 @@
         }
       ]
     },
+    "dashboard": {
+      "params": [
+        {
+          "name": "paths",
+          "opts": [
+            "paths"
+          ],
+          "param_type": "argument",
+          "type": "path"
+        },
+        {
+          "name": "port",
+          "opts": [
+            "--port"
+          ],
+          "param_type": "option",
+          "type": "integer range"
+        },
+        {
+          "default": "False",
+          "is_flag": true,
+          "name": "no_browser",
+          "opts": [
+            "--no-browser"
+          ],
+          "param_type": "option",
+          "type": "boolean"
+        }
+      ]
+    },
     "dedup-scan": {
       "params": [
         {
@@ -252,6 +282,7 @@
         {
           "choices": [
             "docker",
+            "kata",
             "daytona",
             "e2b",
             "modal",
@@ -274,6 +305,8 @@
             "skypilot",
             "hyperbrowser",
             "vercel",
+            "runta",
+            "mosaic",
             "local"
           ],
           "default": "docker",
@@ -337,6 +370,7 @@
         {
           "choices": [
             "docker",
+            "kata",
             "daytona",
             "e2b",
             "modal",
@@ -359,6 +393,8 @@
             "skypilot",
             "hyperbrowser",
             "vercel",
+            "runta",
+            "mosaic",
             "local"
           ],
           "default": "docker",
@@ -641,6 +677,7 @@
         {
           "choices": [
             "docker",
+            "kata",
             "daytona",
             "e2b",
             "modal",
@@ -663,6 +700,8 @@
             "skypilot",
             "hyperbrowser",
             "vercel",
+            "runta",
+            "mosaic",
             "local"
           ],
           "default": "docker",
@@ -940,6 +979,14 @@
           ],
           "param_type": "option",
           "type": "integer"
+        },
+        {
+          "name": "quality_config",
+          "opts": [
+            "--quality-config"
+          ],
+          "param_type": "option",
+          "type": "file"
         },
         {
           "choices": [
@@ -1326,6 +1373,14 @@
               "type": "integer"
             },
             {
+              "name": "quality_config",
+              "opts": [
+                "--quality-config"
+              ],
+              "param_type": "option",
+              "type": "file"
+            },
+            {
               "choices": [
                 "cli",
                 "json",
@@ -1507,6 +1562,14 @@
               "type": "integer range"
             },
             {
+              "name": "quality_config",
+              "opts": [
+                "--quality-config"
+              ],
+              "param_type": "option",
+              "type": "file"
+            },
+            {
               "name": "profile",
               "opts": [
                 "--profile"
@@ -1592,6 +1655,14 @@
             ],
             "param_type": "option",
             "type": "integer range"
+          },
+          {
+            "name": "quality_config",
+            "opts": [
+              "--quality-config"
+            ],
+            "param_type": "option",
+            "type": "file"
           },
           {
             "name": "profile",
@@ -2105,6 +2176,7 @@
             {
               "choices": [
                 "docker",
+                "kata",
                 "daytona",
                 "e2b",
                 "modal",
@@ -2127,6 +2199,8 @@
                 "skypilot",
                 "hyperbrowser",
                 "vercel",
+                "runta",
+                "mosaic",
                 "local"
               ],
               "default": "docker",
@@ -2190,6 +2264,7 @@
             {
               "choices": [
                 "docker",
+                "kata",
                 "daytona",
                 "e2b",
                 "modal",
@@ -2212,6 +2287,8 @@
                 "skypilot",
                 "hyperbrowser",
                 "vercel",
+                "runta",
+                "mosaic",
                 "local"
               ],
               "default": "docker",
@@ -2693,6 +2770,7 @@
           {
             "choices": [
               "docker",
+              "kata",
               "daytona",
               "e2b",
               "modal",
@@ -2715,6 +2793,8 @@
               "skypilot",
               "hyperbrowser",
               "vercel",
+              "runta",
+              "mosaic",
               "local"
             ],
             "default": "docker",
@@ -3098,6 +3178,14 @@
           "type": "integer"
         },
         {
+          "name": "quality_config",
+          "opts": [
+            "--quality-config"
+          ],
+          "param_type": "option",
+          "type": "file"
+        },
+        {
           "name": "profile",
           "opts": [
             "--profile"
@@ -3209,6 +3297,7 @@
         {
           "choices": [
             "docker",
+            "kata",
             "daytona",
             "e2b",
             "modal",
@@ -3231,6 +3320,8 @@
             "skypilot",
             "hyperbrowser",
             "vercel",
+            "runta",
+            "mosaic",
             "local"
           ],
           "default": "docker",

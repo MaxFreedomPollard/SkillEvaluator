@@ -22,6 +22,7 @@ contributors making non-trivial edits.
 - `agents-and-sandboxes.mdx` — agents, environment backends, local mode, readiness
 - `custom-graders.mdx` — bring-your-own graders and native Harbor tasks
 - `reports.mdx` — report formats, scores, and the results-on-disk contract
+- `performance-dashboard.mdx` — compare saved Tier 3 scores and resource use
 - `benchmark-rollout.mdx` — regenerating and promoting `BENCHMARK.md` cards
 - `ci-integration.mdx` — exit codes, GitHub Actions recipe, progressive adoption
 - `cli-reference.mdx` — every command and flag
@@ -38,14 +39,14 @@ published automatically from `main` via the Fern GitHub integration.
 Prerequisites: Node.js 22+ and npm 10+ (the versions the Fern CLI requires).
 
 ```bash
-# Install the Fern CLI
-npm install -g fern-api
+# Install the pinned Fern CLI from the committed lockfile
+npm ci --prefix fern --ignore-scripts --omit=optional
 
 # From the repo root, preview the site with live reload
-fern docs dev
+./fern/node_modules/.bin/fern docs dev
 
 # Validate the docs configuration and links
-fern check
+./fern/node_modules/.bin/fern check
 ```
 
 `fern docs dev` serves the site at <http://localhost:3000> and reloads on changes

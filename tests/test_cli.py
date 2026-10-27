@@ -49,6 +49,33 @@ def test_top_level_help_shows_branded_header() -> None:
     assert "\x1b[" not in result.output
 
 
+@pytest.mark.parametrize(("min_score", "expected_exit_code"), [(None, 0), (90, 1)])
+def test_quickstart_quality_check_matches_documented_result(
+    tmp_path: Path,
+    min_score: int | None,
+    expected_exit_code: int,
+) -> None:
+    """Keep the bundled first-run result and its threshold behavior reproducible."""
+    skill = Path(__file__).resolve().parents[1] / "src/skillevaluator/tier3/reference_skills/text-analyzer"
+    reports = tmp_path / "reports"
+    args = ["quality-check", str(skill), "-r", "cli", "-r", "json", "-o", str(reports)]
+    if min_score is not None:
+        args.extend(["--min-score", str(min_score)])
+
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == expected_exit_code, result.output
+    payload = json.loads((reports / "skillevaluator-quality.json").read_text(encoding="utf-8"))
+    assert len(payload["results"]) == 1
+    quality_result = payload["results"][0]
+    assert quality_result["quality"]["overall_score"] == 84.5
+    assert quality_result["quality"]["grade"] == "B"
+    assert len(quality_result["findings"]) == 7
+    assert payload["overall_passed"] is (expected_exit_code == 0)
+    assert payload["publication_status"] == ("incomplete" if expected_exit_code == 0 else "fail")
+    assert "84.5/100" in result.output
+
+
 def test_top_level_help_groups_commands_by_workflow() -> None:
     result = CliRunner().invoke(cli, ["--help"])
 
@@ -64,7 +91,7 @@ def test_top_level_help_groups_commands_by_workflow() -> None:
     assert positions == sorted(positions)
 
     core = result.output.split("Core workflows:", 1)[1].split("Tier 1 · Static and security:", 1)[0]
-    assert all(command in core for command in ("validate", "health-check", "doctor", "models"))
+    assert all(command in core for command in ("validate", "health-check", "doctor", "models", "dashboard"))
     tier3 = result.output.split("Tier 3 · Live evaluation:", 1)[1]
     assert all(command in tier3 for command in ("create-eval-dataset", "compare", "view", "harbor-view"))
     assert "Other commands:" not in result.output
@@ -982,3 +1009,46 @@ def test_pii_scan_malformed_llm_verdict_is_incomplete(
     findings = payload["results"][0]["findings"]
     assert findings[0]["metadata"]["llm_verdict"] == "true_positive"
     assert "llm_verdict" not in findings[1]["metadata"]
+
+
+@pytest.mark.parametrize("command_prefix", [["doctor"], ["tier3", "evaluate"], ["evaluate"]])
+def test_cli_environment_kwargs_malformed_syntax_exits_code_2_without_traceback(
+    tmp_path: Path,
+    command_prefix: list[str],
+) -> None:
+    """Verify malformed --ek arguments produce clean Click BadParameter exit code 2 without tracebacks."""
+    runner = CliRunner()
+    args = [*command_prefix, "--ek", "malformed_no_equal"]
+    if "evaluate" in command_prefix:
+        args.append(str(tmp_path))
+    result = runner.invoke(cli, args)
+    assert result.exit_code == 2
+    assert "Invalid value for '--ek'" in result.output
+    assert "KEY=VALUE" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "sensitive_arg",
+    [
+        "authorization=secret_token",
+        "service_account_key=my_key",
+        "private_key=secret",
+    ],
+)
+@pytest.mark.parametrize("command_prefix", [["doctor"], ["tier3", "evaluate"]])
+def test_cli_environment_kwargs_sensitive_credential_exits_code_2_without_traceback(
+    tmp_path: Path,
+    command_prefix: list[str],
+    sensitive_arg: str,
+) -> None:
+    """Verify credential keys passed to --ek produce clean Click BadParameter exit code 2."""
+    runner = CliRunner()
+    args = [*command_prefix, "--ek", sensitive_arg]
+    if "evaluate" in command_prefix:
+        args.append(str(tmp_path))
+    result = runner.invoke(cli, args)
+    assert result.exit_code == 2
+    assert "Invalid value for '--ek'" in result.output
+    assert "Sensitive key or value detected" in result.output
+    assert "Traceback" not in result.output
